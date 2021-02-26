@@ -9,12 +9,12 @@ import "core:fmt"
 Config :: struct {
 	spaces: int,
 	tabs: bool,
-	bracket_newline: bool, //have the ability to choose for structs, enums, etc?
+	convert_do: bool,
 }
 
 default_style := Config {
 	spaces = 4,
-	bracket_newline = true,
+	convert_do = false,
 };
 
 
@@ -29,8 +29,8 @@ Printer :: struct {
 
 newline :: '\n';
 whitespace :: ' ';
-lbracket :: '{';
-rbracket :: '}';
+lbrace :: '{';
+rbrace :: '}';
 lparen :: '(';
 rparen :: ')';
 semicolon :: ';';
@@ -65,7 +65,6 @@ print :: proc(p: ^Printer, args: ..any) {
 		case string:
 			str = a;
 		case tokenizer.Token:
-
 			#partial switch a.kind {
 			case .Case:
 				p.depth -= 1;
@@ -85,14 +84,15 @@ print :: proc(p: ^Printer, args: ..any) {
 				str = "(";
 			case rparen:
 				str = ")";
-			case lbracket:
+			case lbrace:
 				str = "{";
-				p.depth += 1;
-			case rbracket:
+			case rbrace:
 				str = "}";
 				p.depth -= 1;
 			case whitespace:
 				str = " ";
+			case semicolon:
+				str = ";";
 			}
 		case ast.Ident:
 			str = a.name;
@@ -101,6 +101,10 @@ print :: proc(p: ^Printer, args: ..any) {
 		if p.newline && str != "\n" {
 			write_indent(p);
 			p.newline = false;
+		}
+
+		if str == "{" {
+			p.depth += 1;
 		}
 
 		if tok.kind == .Case {
@@ -117,16 +121,26 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 
 	using ast;
 
+	if expr == nil {
+		return;
+	}
+
 	switch v in expr.derived {
 	case Ident:
 		print(p, v);
 	case Struct_Type:
 		print(p, "struct");
 
-		print(p, whitespace, lbracket);
+		if v.poly_params != nil {
+			print(p, lparen);
+			print_field_list(p, v.poly_params, ", ");
+			print(p, rparen);
+		}
+
 		p.source_position = v.fields.pos;
-		print_field_list(p, v.fields);
-		print(p, newline, rbracket);
+		print(p, whitespace, lbrace, newline);
+		print_field_list(p, v.fields, ",");
+		print(p, newline, rbrace);
 	case Proc_Lit:
 		print(p, "proc"); //TOOD(ast is missing proc token)
 		print(p, lparen);
@@ -152,10 +166,11 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 
 		}
 
-		print(p, whitespace, lbracket);
 		p.source_position = v.body.pos;
+
+		print(p, whitespace);
+
 		print_stmt(p, v.body);
-		print(p, newline, rbracket);
 	case Basic_Lit:
 		print(p, v.tok);
 	case Binary_Expr:
@@ -169,8 +184,15 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		print(p, lparen);
 		print_exprs(p, v.args, ", ");
 		print(p, rparen);
+	case Typeid_Type:
+		print(p, "type_id");
+	case Selector_Expr:
+		print_expr(p, v.expr);
+		print(p, ".");
+		print_expr(p, v.field);
 	case:
 		fmt.println(expr.derived);
+		fmt.println();
 	}
 
 }
@@ -178,6 +200,8 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 print_exprs :: proc(p: ^Printer, list: [] ^ ast.Expr, sep := " ") {
 
 	for expr, i in list {
+
+		newline_until_pos(p, expr.pos);
 
 		print_expr(p, expr);
 
@@ -188,13 +212,14 @@ print_exprs :: proc(p: ^Printer, list: [] ^ ast.Expr, sep := " ") {
 
 }
 
-print_field_list :: proc(p: ^Printer, list: ^ast.Field_List) {
+print_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 
 	if list.list == nil {
 		return;
 	}
 
-	for field in list.list {
+	for field, i in list.list {
+
 		print_exprs(p, field.names, ", ");
 
 		if len(field.names) != 0 {
@@ -209,11 +234,15 @@ print_field_list :: proc(p: ^Printer, list: ^ast.Field_List) {
 			print(p, ":= ");
 			print_expr(p, field.default_value);
 		}
+
+		if i != len(list.list) - 1 {
+			print(p, sep);
+		}
 	}
 
 }
 
-print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt) {
+print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 
 	using ast;
 
@@ -225,8 +254,17 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt) {
 
 	switch v in stmt.derived {
 	case Block_Stmt:
+
+		if !empty_block {
+			print(p, lbrace, newline);
+		}
+
 		for stmt in v.stmts {
 			print_stmt(p, stmt);
+		}
+
+		if !empty_block {
+			print(p, newline, rbrace);
 		}
 	case Value_Decl:
 		print_decl(p, cast(^Decl)stmt);
@@ -246,29 +284,41 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt) {
 
 		print_expr(p, v.cond);
 
-		print(p, whitespace, lbracket);
+
 		p.source_position = v.body.pos;
-		print_stmt(p, v.body);
-		print(p, newline, rbracket);
+
+		uses_do := false;
+
+		if check_stmt, ok := v.body.derived.(Block_Stmt); ok && check_stmt.uses_do {
+			uses_do = true;
+		}
+
+		if uses_do && !p.config.convert_do {
+			print(p, whitespace, "do", whitespace);
+			print_stmt(p, v.body, true);
+			p.source_position = v.body.end;
+		}
+
+		else {
+			if uses_do {
+				print(p, newline);
+			}
+
+			print(p, whitespace);
+
+			print_stmt(p, v.body);
+
+			p.source_position = v.body.end;
+		}
 
 		if v.else_stmt != nil {
 			print(p, newline, newline, "else");
-
-			if _, ok := v.else_stmt.derived.(If_Stmt); !ok {
-				print(p, whitespace, lbracket);
-				//can i defer print(p, newline, rbracket); to the outer scope?
-			}
-
-			else {
-				print(p, whitespace);
-			}
+			print(p, whitespace);
 
 			p.source_position = v.else_stmt.pos;
+
 			print_stmt(p, v.else_stmt);
 
-			if _, ok := v.else_stmt.derived.(If_Stmt); !ok {
-				print(p, newline, rbracket);
-			}
 		}
 	case Switch_Stmt:
 
@@ -286,10 +336,11 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt) {
 
 		print_expr(p, v.cond);
 
-		print(p, whitespace, lbracket);
 		p.source_position = v.body.pos;
+
+		print(p, whitespace);
+
 		print_stmt(p, v.body);
-		print(p, newline, rbracket);
 	case Case_Clause:
 		token := tokenizer.Token {
 			text = "case",
@@ -314,18 +365,38 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt) {
 
 		print_stmt(p, v.tag);
 
-		print(p, whitespace, lbracket);
 		p.source_position = v.body.pos;
+
+		print(p, whitespace);
+
 		print_stmt(p, v.body);
-		print(p, newline, rbracket);
 	case Assign_Stmt:
-		print_exprs(p, v.lhs, ",");
+		print_exprs(p, v.lhs, ", ");
 		print(p, whitespace, v.op, whitespace);
-		print_exprs(p, v.rhs, ",");
+		print_exprs(p, v.rhs, ", ");
 	case Expr_Stmt:
 		print_expr(p, v.expr);
+	case For_Stmt:
+
+		if v.label != nil {
+			print_expr(p, v.label);
+			print(p, ":", whitespace);
+		}
+
+		print(p, "for", whitespace);
+
+		print_stmt(p, v.init);
+		print(p, semicolon, whitespace);
+		print_expr(p, v.cond);
+		print(p, semicolon, whitespace);
+		print_stmt(p, v.post);
+
+		p.source_position = v.body.pos;
+
+		print_stmt(p, v.body);
 	case:
 		fmt.println(stmt.derived);
+		fmt.println();
 	}
 
 }
@@ -345,31 +416,40 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl) {
 		if v.name.text != "" {
 			print(p, v.import_tok, " ", v.name, " ", v.fullpath);
 		}
+
 		else {
 			print(p, v.import_tok, " ", v.fullpath);
 		}
 	case Value_Decl:
 		print_exprs(p, v.names, ",");
 
-		seperator := " :";
+		seperator := ":";
 
 		if !v.is_mutable {
 			seperator = " :: ";
 		}
 
-		print(p, seperator);
-
 		if v.type != nil {
-		   print_expr(p, v.type);
+			print(p, seperator, whitespace);
+			print_expr(p, v.type);
 		}
 
-		else if v.is_mutable {
+		else {
+			print(p, whitespace, seperator);
+		}
+
+		if v.is_mutable && v.type != nil {
+			print(p, whitespace, "=", whitespace);
+		}
+
+		else if v.is_mutable && v.type == nil {
 			print(p, "=", whitespace);
 		}
 
 		print_exprs(p, v.values, ",");
 	case:
 		fmt.println(decl.derived);
+		fmt.println();
 	}
 
 
