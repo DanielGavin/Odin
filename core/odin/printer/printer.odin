@@ -707,10 +707,11 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 	case .Fast_Call:
 		print(p, "\"fast\"", space);
 	case .None:
-		//??
+		//nothing i guess
 	case .Invalid:
-		//??
+		//nothing i guess
 	case .Foreign_Block_Default:
+		panic("what should these calling conv be called");
 		//??
 	}
 
