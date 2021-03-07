@@ -699,14 +699,19 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 	switch proc_type.calling_convention {
 	case .Odin:
 	case .Contextless:
-		print(p, "contextless");
+		print(p, "\"contextless\"", space);
 	case .C_Decl:
 		print(p, "\"c\"", space);
 	case .Std_Call:
+		print(p, "\"std\"", space);
 	case .Fast_Call:
+		print(p, "\"fast\"", space);
 	case .None:
+		//??
 	case .Invalid:
+		//??
 	case .Foreign_Block_Default:
+		//??
 	}
 
 	print(p, lparen);
