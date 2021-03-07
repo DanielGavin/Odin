@@ -19,6 +19,7 @@ Config :: struct {
 	tabs: bool, //Enable or disable tabs
 	convert_do: bool, //Convert all do statements to brace blocks
 	semicolons: bool, //Enable semicolons
+	split_multiple_stmts: bool,
 	brace_style: Brace_Style,
 }
 
@@ -27,8 +28,9 @@ default_style := Config {
 	newline_limit = 2,
 	convert_do = false,
 	semicolons = true,
-	tabs = false,
+	tabs = true,
 	brace_style = ._1TBS,
+	split_multiple_stmts = true,
 };
 
 
@@ -422,6 +424,8 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 	set_source_position(p, expr.pos);
 
 	switch v in expr.derived {
+	case Ellipsis:
+		print_expr(p, v.expr);
 	case Relative_Type:
 		print_expr(p, v.tag);
 		print(p, space);
@@ -550,50 +554,12 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 
 		set_source_position(p, v.end);
 	case Proc_Lit:
-		print(p, "proc"); //TOOD(ast is missing proc token)
-		print(p, lparen);
 
-		if v.type != nil {
-			print_field_list(p, v.type.params, ", ");
+		if v.inlining == .Inline {
+			print(p, "#force_inline", space);
 		}
 
-		print(p, rparen);
-
-		if v.type != nil && v.type.results != nil {
-			print(p, space, "->", space);
-
-			use_parens := false;
-			use_named := false;
-
-
-			if len(v.type.results.list) > 1 {
-				use_parens = true;
-			}
-
-			else if len(v.type.results.list) == 1 {
-
-				for name in v.type.results.list[0].names {
-					if ident, ok := name.derived.(Ident); ok {
-						if ident.name != "_" {
-							use_parens = true;
-						}
-					}
-				}
-
-			}
-
-			if use_parens {
-				print(p, lparen);
-				print_signature_list(p, v.type.results, ", ");
-				print(p, rparen);
-			}
-
-			else {
-				print_signature_list(p, v.type.results, ", ");
-			}
-
-
-		}
+		print_proc_type(p, v.type^);
 
 		if v.where_clauses != nil {
 			print(p, space);
@@ -610,6 +576,8 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		else {
 			print(p, space, "---");
 		}
+	case Proc_Type:
+		print_proc_type(p, v);
 	case Basic_Lit:
 		print(p, v.tok);
 	case Binary_Expr:
@@ -712,8 +680,74 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		print_expr(p, v.key);
 		print(p, rbracket);
 		print_expr(p, v.value);
+	case Helper_Type:
+		print_expr(p, v.type);
 	case:
 		panic(fmt.aprint(expr.derived));
+	}
+
+}
+
+print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
+
+	print(p, "proc"); //TOOD(ast is missing proc token)
+
+	if proc_type.calling_convention != .None {
+		print(p, space);
+	}
+
+	switch proc_type.calling_convention {
+	case .Odin:
+	case .Contextless:
+		print(p, "contextless");
+	case .C_Decl:
+		print(p, "\"c\"", space);
+	case .Std_Call:
+	case .Fast_Call:
+	case .None:
+	case .Invalid:
+	case .Foreign_Block_Default:
+	}
+
+	print(p, lparen);
+	print_signature_list(p, proc_type.params, ", ");
+
+
+	print(p, rparen);
+
+	if proc_type.results != nil {
+		print(p, space, "->", space);
+
+		use_parens := false;
+		use_named := false;
+
+
+		if len(proc_type.results.list) > 1 {
+			use_parens = true;
+		}
+
+		else if len(proc_type.results.list) == 1 {
+
+			for name in proc_type.results.list[0].names {
+				if ident, ok := name.derived.(ast.Ident); ok {
+					if ident.name != "_" {
+						use_parens = true;
+					}
+				}
+			}
+
+		}
+
+		if use_parens {
+			print(p, lparen);
+			print_signature_list(p, proc_type.results, ", ");
+			print(p, rparen);
+		}
+
+		else {
+			print_signature_list(p, proc_type.results, ", ");
+		}
+
 	}
 
 }
@@ -905,7 +939,28 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 	case Block_Stmt:
 		newline_until_pos(p, v.pos);
 
-		if v.pos.line == v.end.line {
+		if v.pos.line == v.end.line && len(v.stmts) > 1 && p.config.split_multiple_stmts {
+
+			if !empty_block {
+				print_begin_brace(p);
+			}
+
+			set_source_position(p, v.pos);
+
+			for stmt in v.stmts {
+				print(p, newline);
+				print_stmt(p, stmt, false, true);
+			}
+
+			set_source_position(p, v.end);
+
+			if !empty_block {
+				print_end_brace(p);
+			}
+
+		}
+
+		else if v.pos.line == v.end.line {
 			if !empty_block {
 				print(p, lbrace);
 			}
