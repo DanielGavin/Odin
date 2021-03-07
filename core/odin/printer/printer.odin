@@ -8,26 +8,27 @@ import "core:fmt"
 import "core:unicode/utf8"
 import "core:mem"
 
-Bracket_Style :: enum {
+Brace_Style :: enum {
 	_1TBS,
 	Allman,
 }
 
 Config :: struct {
-	spaces: int,
-	newline_limit: int,
-	tabs: bool,
-	convert_do: bool,
-	semicolons: bool,
-	bracket_style: Bracket_Style,
+	spaces: int, //Spaces per indentation
+	newline_limit: int, //The limit of newlines between statements and declarations.
+	tabs: bool, //Enable or disable tabs
+	convert_do: bool, //Convert all do statements to brace blocks
+	semicolons: bool, //Enable semicolons
+	brace_style: Brace_Style,
 }
 
 default_style := Config {
 	spaces = 4,
 	newline_limit = 2,
 	convert_do = false,
-	semicolons = false,
-	bracket_style = .Allman,
+	semicolons = true,
+	tabs = false,
+	brace_style = ._1TBS,
 };
 
 
@@ -35,7 +36,7 @@ Printer :: struct {
 	string_builder: strings.Builder,
 	config: Config,
 	source_position: tokenizer.Pos, //the source position from the ast
-	out_position: tokenizer.Pos, //the out position of the written data
+	out_position: tokenizer.Pos, //the out position of the written data - TODO(daniel, eventually remove the out_position if it never gets used)
 	last_position: tokenizer.Pos, //the last position from print function
 	whitespaces: [] Whitespace, //buffered whitespaces
 	current_whitespace: int,
@@ -43,6 +44,8 @@ Printer :: struct {
 	comments: [dynamic] ^ast.Comment_Group,
 	latest_comment_index: int,
 	allocator: mem.Allocator,
+	skip_indent: bool, //skip indentation in blocks¨
+	skip_semicolon: bool,
 }
 
 Whitespace :: distinct byte;
@@ -96,16 +99,18 @@ print :: proc(p: ^Printer, args: ..any) {
 		case string:
 			data = a;
 		case tokenizer.Token:
-			#partial switch a.kind {
-			case .Case:
-				p.depth -= 1;
-			}
 			tok = a;
 			data = a.text;
 		case byte:
 			b = a;
 			data = strings.string_from_ptr(&b, 1);
 		case Whitespace:
+
+			//consume the whitespaces if it every reaches buffer size
+			if p.current_whitespace == len(p.whitespaces) {
+				write_whitespaces(p, p.current_whitespace);
+			}
+
 			p.whitespaces[p.current_whitespace] = a;
 			p.current_whitespace += 1;
 			continue;
@@ -132,13 +137,18 @@ print :: proc(p: ^Printer, args: ..any) {
 }
 
 newline_until_pos :: proc(p: ^Printer, pos: tokenizer.Pos) {
+	newline_until_pos_limit(p, pos, p.config.newline_limit);
+}
 
-	lines := min(pos.line - p.source_position.line, p.config.newline_limit);
+newline_until_pos_limit :: proc(p: ^Printer, pos: tokenizer.Pos, limit: int) {
+
+	lines := min(pos.line - p.source_position.line, limit);
 
 	for i := 0; i < lines; i += 1 {
 		print(p, newline);
 	}
 
+	//all whitespaces are buffered and we therefore set the expected source_position
 	p.source_position = pos;
 }
 
@@ -150,27 +160,34 @@ comment_before_position :: proc(p: ^Printer, pos: tokenizer.Pos) -> bool {
 
 	comment := p.comments[p.latest_comment_index];
 
-	return comment.pos.offset < pos.offset + p.current_whitespace;
+	return comment.pos.offset < pos.offset;
 }
 
 next_comment_group :: proc(p: ^Printer) {
 	p.latest_comment_index += 1;
 }
 
-prefix_comment_group :: proc(p: ^Printer, last: tokenizer.Pos, pos: tokenizer.Pos, comment_group: ^ast.Comment_Group) {
+prefix_comment_group :: proc(p: ^Printer, last: tokenizer.Pos, pos: tokenizer.Pos, comment_group: ^ast.Comment_Group) -> int {
 
 	//unwind all the newlines from the last position of a non whitespace to the current
+
+	indent_change := 0;
 
 	for i := 0; i < p.current_whitespace; i += 1 {
 
 		switch w := p.whitespaces[i]; w {
 		case newline:
 			p.whitespaces[i] = ignore;
+		case unindent:
+			p.whitespaces[i] = ignore;
+			indent_change -= 1;
 		}
 
 	}
 
 	write_whitespaces(p, p.current_whitespace);
+
+	return indent_change;
 }
 
 postfix_comments :: proc(p: ^Printer, pos: tokenizer.Pos, last_comment: ^tokenizer.Token) {
@@ -189,6 +206,8 @@ postfix_comments :: proc(p: ^Printer, pos: tokenizer.Pos, last_comment: ^tokeniz
 }
 
 write_prefix_comment :: proc(p: ^Printer, prev_comment: ^tokenizer.Token, comment: tokenizer.Token) {
+
+	//handle the placement of the comment with newlines
 
 	if p.last_position.line == comment.pos.line {
 		write_byte(p, cast(byte)space);
@@ -219,15 +238,58 @@ write_prefix_comment :: proc(p: ^Printer, prev_comment: ^tokenizer.Token, commen
 
 write_comment :: proc(p: ^Printer, comment: tokenizer.Token) {
 
+	if len(comment.text) == 0 {
+		return;
+	}
+
 	if comment.text[0] == '/' && comment.text[1] == '/' {
 		write_string(p, comment.pos, comment.text);
 	}
 
 	else {
-		write_string(p, comment.pos, comment.text);
-		newlines := strings.count(comment.text, "\n");
-		p.source_position.line += newlines;
-		p.out_position.line += newlines;
+
+		c_len := len(comment.text);
+
+		trim_space := true;
+
+		for i := 0; i < len(comment.text); i += 1 {
+
+			c := comment.text[i];
+
+			if c != ' ' && c != '\t' {
+				trim_space = false;
+			}
+
+			if (c == ' ' || c == '\t') && trim_space {
+				continue;
+			}
+
+			else if c == 13 && comment.text[min(c_len-1, i+1)] == 10 {
+				write_byte(p, '\n');
+				trim_space = true;
+				i += 1;
+			}
+
+			else if c == '/' && comment.text[min(c_len-1, i+1)] == '*' {
+				write_string(p, p.source_position, "/*");
+				trim_space = true;
+				p.depth += 1;
+				i += 1;
+			}
+
+			else if c == '*' && comment.text[min(c_len-1, i+1)]  == '/' {
+				p.depth -= 1;
+				trim_space = true;
+				write_string(p, p.source_position, "*/");
+				i += 1;
+			}
+
+			else {
+				write_byte(p, c);
+			}
+
+		}
+
 	}
 }
 
@@ -240,7 +302,7 @@ write_comments :: proc(p: ^Printer, pos: tokenizer.Pos) {
 
 		comment_group := p.comments[p.latest_comment_index];
 
-		prefix_comment_group(p, next, pos, comment_group);
+		indentation := prefix_comment_group(p, next, pos, comment_group);
 
 		for comment, i in comment_group.list {
 			write_prefix_comment(p, prev_comment, comment);
@@ -248,6 +310,9 @@ write_comments :: proc(p: ^Printer, pos: tokenizer.Pos) {
 			next = comment.pos;
 			prev_comment = &comment_group.list[i];
 		}
+
+		//restore the indentation
+		p.depth += indentation;
 
 		next_comment_group(p);
 	}
@@ -384,6 +449,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		print(p, "distinct", space);
 		print_expr(p, v.type);
 	case Dynamic_Array_Type:
+		print_expr(p, v.tag);
 		print(p, lbracket, "dynamic", rbracket);
 		print_expr(p, v.elem);
 	case Bit_Set_Type:
@@ -405,6 +471,12 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 			print(p, rparen);
 		}
 
+		if v.is_maybe {
+			print(p, space, "#maybe");
+		}
+
+		set_source_position(p, v.variants[len(v.variants)-1].pos);
+
 		if v.variants != nil && (len(v.variants) == 0 || v.pos.line == v.end.line) {
 			print(p, space, lbrace);
 			print_exprs(p, v.variants, ", ");
@@ -412,9 +484,11 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		}
 
 		else {
-			print(p, space, lbrace, newline);
+			print(p, space);
+			print_begin_brace(p);
+			print(p, newline);
 			print_exprs(p, v.variants, ",");
-			print(p, newline, rbrace);
+			print_end_brace(p);
 		}
 	case Enum_Type:
 		print(p, "enum");
@@ -428,9 +502,11 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		}
 
 		else {
-			print(p, space, lbrace, newline);
+			print(p, space);
+			print_begin_brace(p);
+			print(p, newline);
 			print_exprs(p, v.fields, ",");
-			print(p, newline, rbrace);
+			print_end_brace(p);
 		}
 
 		set_source_position(p, v.end);
@@ -486,15 +562,36 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		if v.type != nil && v.type.results != nil {
 			print(p, space, "->", space);
 
-			if len(v.type.results.list) > 1 || (len(v.type.results.list) == 1 && v.type.results.list[0].type != nil) {
+			use_parens := false;
+			use_named := false;
+
+
+			if len(v.type.results.list) > 1 {
+				use_parens = true;
+			}
+
+			else if len(v.type.results.list) == 1 {
+
+				for name in v.type.results.list[0].names {
+					if ident, ok := name.derived.(Ident); ok {
+						if ident.name != "_" {
+							use_parens = true;
+						}
+					}
+				}
+
+			}
+
+			if use_parens {
 				print(p, lparen);
-				print_field_list(p, v.type.results);
+				print_signature_list(p, v.type.results, ", ");
 				print(p, rparen);
 			}
 
-			else{
-				print_field_list(p, v.type.results);
+			else {
+				print_signature_list(p, v.type.results, ", ");
 			}
+
 
 		}
 
@@ -516,17 +613,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 	case Basic_Lit:
 		print(p, v.tok);
 	case Binary_Expr:
-		if v.op.kind == .Ellipsis || v.op.kind == .Range_Half {
-			print_expr(p, v.left);
-			print(p, v.op);
-			print_expr(p, v.right);
-		}
-
-		else {
-			print_expr(p, v.left);
-			print(p, space, v.op, space);
-			print_expr(p, v.right);
-		}
+		print_binary_expr(p, v);
 	case Implicit_Selector_Expr:
 		print(p, dot, v.field^);
 	case Call_Expr:
@@ -535,7 +622,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		print_exprs(p, v.args, ", ");
 		print(p, rparen);
 	case Typeid_Type:
-		print(p, "type_id");
+		print(p, "typeid");
 		if v.specialization != nil {
 			print(p, "/");
 			print_expr(p, v.specialization);
@@ -558,22 +645,21 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		print_exprs(p, v.args, ", ");
 		print(p, rbrace);
 	case Comp_Lit:
-		if len(v.elems) == 0 {
-			return;
-		}
 
 		if v.type != nil {
 			print_expr(p, v.type);
 			print(p, space);
 		}
 
-		set_source_position(p, v.elems[0].pos);
+		if len(v.elems) != 0 {
+			set_source_position(p, v.elems[0].pos);
+		}
 
-		if v.pos.line != v.elems[len(v.elems)-1].pos.line {
-			print(p, lbrace);
+		if len(v.elems) != 0 && v.pos.line != v.elems[len(v.elems)-1].pos.line {
+			print_begin_brace(p);
 			print(p, newline);
 			print_exprs(p, v.elems, ", ");
-			print(p, newline, rbrace);
+			print_end_brace(p);
 		}
 
 		else {
@@ -590,9 +676,18 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		print_expr(p, v.value);
 	case Type_Assertion:
 		print_expr(p, v.expr);
-		print(p, dot, lparen);
-		print_expr(p, v.type);
-		print(p, rparen);
+
+		if unary, ok := v.type.derived.(Unary_Expr); ok && unary.op.text == "?" {
+			print(p, dot);
+			print_expr(p, v.type);
+		}
+
+		else {
+			print(p, dot, lparen);
+			print_expr(p, v.type);
+			print(p, rparen);
+		}
+
 	case Pointer_Type:
 		print(p, "^");
 		print_expr(p, v.elem);
@@ -629,6 +724,7 @@ print_exprs :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 		return;
 	}
 
+	//all the expression are on the line
 	if list[0].pos.line == list[len(list)-1].pos.line {
 
 		for expr, i in list {
@@ -642,8 +738,50 @@ print_exprs :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 
 	}
 
+	//we have to newline the expressions to respect the source
 	else {
 
+		for expr, i in list {
+
+			newline_until_pos_limit(p, expr.pos, 1);
+
+			print_expr(p, expr);
+
+			if i != len(list) - 1{
+				print(p, sep);
+			}
+		}
+
+	}
+
+}
+
+print_binary_expr :: proc(p: ^Printer, binary: ast.Binary_Expr) {
+
+	if v, ok := binary.left.derived.(ast.Binary_Expr); ok {
+		print_binary_expr(p, v);
+	}
+
+	else {
+		print_expr(p, binary.left);
+	}
+
+	if binary.op.kind == .Ellipsis || binary.op.kind == .Range_Half {
+		print(p, binary.op);
+	}
+
+	else {
+		print(p, space, binary.op, space);
+	}
+
+	newline_until_pos(p, binary.right.pos);
+
+	if v, ok := binary.right.derived.(ast.Binary_Expr); ok {
+		print_binary_expr(p, v);
+	}
+
+	else {
+		print_expr(p, binary.right);
 	}
 
 }
@@ -656,6 +794,8 @@ print_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 	}
 
 	for field, i in list.list {
+
+		newline_until_pos_limit(p, field.pos, 1);
 
 		if .Using in field.flags {
 			print(p, "using", space);
@@ -676,6 +816,10 @@ print_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 			print_expr(p, field.default_value);
 		}
 
+		if field.tag.text != "" {
+			print(p, space, field.tag);
+		}
+
 		if i != len(list.list) - 1 {
 			print(p, sep);
 		}
@@ -683,7 +827,56 @@ print_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 
 }
 
-print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
+print_signature_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
+
+	if list.list == nil {
+		return;
+	}
+
+	for field, i in list.list {
+
+		newline_until_pos_limit(p, field.pos, 1);
+
+		if .Using in field.flags {
+			print(p, "using", space);
+		}
+
+		named := false;
+
+		for name in field.names {
+			if ident, ok := name.derived.(ast.Ident); ok {
+				if ident.name != "_" {
+					named = true;
+				}
+			}
+		}
+
+		if named {
+			print_exprs(p, field.names, ", ");
+
+			if len(field.names) != 0 {
+				print(p, ": ");
+			}
+		}
+
+		if field.type != nil {
+			print_expr(p, field.type);
+		}
+
+		else {
+			print(p, ":= ");
+			print_expr(p, field.default_value);
+		}
+
+		if i != len(list.list) - 1 {
+			print(p, sep);
+		}
+	}
+
+}
+
+
+print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stmt := false) {
 
 	using ast;
 
@@ -693,22 +886,23 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 
 	switch v in stmt.derived {
 	case Value_Decl:
-		print_decl(p, cast(^Decl)stmt);
+		print_decl(p, cast(^Decl)stmt, true);
 		return;
 	case Foreign_Import_Decl:
-		print_decl(p, cast(^Decl)stmt);
+		print_decl(p, cast(^Decl)stmt, true);
 		return;
 	case Foreign_Block_Decl:
-		print_decl(p, cast(^Decl)stmt);
+		print_decl(p, cast(^Decl)stmt, true);
 		return;
 	}
 
 	switch v in stmt.derived {
 	case Using_Stmt:
+		newline_until_pos(p, v.pos);
 		print(p, "using", space);
 		print_exprs(p, v.list, ", ");
+		print(p, semicolon);
 	case Block_Stmt:
-
 		newline_until_pos(p, v.pos);
 
 		if v.pos.line == v.end.line {
@@ -719,7 +913,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 			set_source_position(p, v.pos);
 
 			for stmt in v.stmts {
-				print_stmt(p, stmt);
+				print_stmt(p, stmt, false, true);
 			}
 
 			set_source_position(p, v.end);
@@ -736,7 +930,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 			set_source_position(p, v.pos);
 
 			for stmt in v.stmts {
-				print_stmt(p, stmt);
+				print_stmt(p, stmt, false, true);
 			}
 
 			set_source_position(p, v.end);
@@ -746,7 +940,6 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 			}
 		}
 	case If_Stmt:
-
 		newline_until_pos(p, v.pos);
 
 		if v.label != nil {
@@ -757,8 +950,10 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 		print(p, "if", space);
 
 		if v.init != nil {
+			p.skip_semicolon = true;
 			print_stmt(p, v.init);
-			print(p, ";", space);
+			p.skip_semicolon = false;
+			print(p, semicolon, space);
 		}
 
 		print_expr(p, v.cond);
@@ -793,7 +988,6 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 			print_stmt(p, v.else_stmt);
 		}
 	case Switch_Stmt:
-
 		newline_until_pos(p, v.pos);
 
 		if v.label != nil {
@@ -808,17 +1002,20 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 		print(p, "switch", space);
 
 		if v.init != nil {
+			p.skip_semicolon = true;
 			print_stmt(p, v.init);
-			print(p, ";", space);
+			p.skip_semicolon = false;
+			print(p, semicolon, space);
 		}
 
 		print_expr(p, v.cond);
 
 		print(p, space);
 
+		p.skip_indent = true;
 		print_stmt(p, v.body);
+		p.skip_indent = false;
 	case Case_Clause:
-
 		newline_until_pos(p, v.pos);
 
 		print(p, "case", indent);
@@ -831,12 +1028,11 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 		print(p, v.terminator, space);
 
 		for stmt in v.body {
-			print_stmt(p, stmt);
+			print_stmt(p, stmt, false, true);
 		}
 
 		print(p, unindent);
 	case Type_Switch_Stmt:
-
 		newline_until_pos(p, v.pos);
 
 		if v.label != nil {
@@ -854,15 +1050,37 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 
 		print(p, space);
 
+		p.skip_indent = true;
 		print_stmt(p, v.body);
+		p.skip_indent = false;
 	case Assign_Stmt:
 		newline_until_pos(p, v.pos);
+
+		/*
+		if len(v.lhs) == 1 {
+
+			if ident, ok := v.lhs[0].derived.(Ident); ok && ident.name == "_" {
+				print(p, v.op, space);
+				print_exprs(p, v.rhs, ", ");
+				return;
+			}
+
+		}
+		*/
+
 		print_exprs(p, v.lhs, ", ");
 		print(p, space, v.op, space);
 		print_exprs(p, v.rhs, ", ");
+
+		if block_stmt {
+			print(p, semicolon);
+		}
 	case Expr_Stmt:
 		newline_until_pos(p, v.pos);
 		print_expr(p, v.expr);
+		if block_stmt {
+			print(p, semicolon);
+		}
 	case For_Stmt:
 
 		newline_until_pos(p, v.pos);
@@ -872,21 +1090,35 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 			print(p, ":", space);
 		}
 
-		print(p, "for", space);
+		print(p, "for");
+
+		if v.init != nil || v.cond != nil || v.post != nil {
+			print(p, space);
+		}
 
 		if v.init != nil {
+			p.skip_semicolon = true;
 			print_stmt(p, v.init);
+			p.skip_semicolon = false;
 			print(p, semicolon, space);
 		}
 
-		print_expr(p, v.cond);
+		if v.cond != nil {
+			print_expr(p, v.cond);
+		}
+
+		if v.init != nil {
+			print(p, semicolon);
+		}
 
 		if v.post != nil {
-			print(p, semicolon, space);
+			print(p, space);
 			print_stmt(p, v.post);
 		}
 
-		print(p, space);
+		if v.init == nil && v.post == nil && v.cond != nil {
+			print(p, space);
+		}
 
 		print_stmt(p, v.body);
 	case Inline_Range_Stmt:
@@ -906,9 +1138,10 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 		if v.val1 != nil {
 			print(p, ",", space);
 			print_expr(p, v.val1);
+			print(p, space);
 		}
 
-		print(p, space, "in", space);
+		print(p, "in", space);
 		print_expr(p, v.expr);
 		print(p, space);
 
@@ -925,24 +1158,39 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 		print(p, "for", space);
 		print_expr(p, v.val0);
 
+
 		if v.val1 != nil {
 			print(p, ",", space);
 			print_expr(p, v.val1);
+			print(p, space);
 		}
 
-		print(p, space, "in", space);
+		else {
+			print(p, space);
+		}
+
+		print(p, "in", space);
 		print_expr(p, v.expr);
 		print(p, space);
 
 		print_stmt(p, v.body);
 	case Return_Stmt:
 		newline_until_pos(p, v.pos);
-		print(p, "return", space);
-		print_exprs(p, v.results, ", ");
+		print(p, "return");
+
+		if v.results != nil {
+			print(p, space);
+			print_exprs(p, v.results, ", ");
+		}
+
+		if block_stmt && p.config.semicolons {
+			print(p, semicolon);
+		}
 	case Defer_Stmt:
 		newline_until_pos(p, v.pos);
 		print(p, "defer", space);
 		print_stmt(p, v.stmt);
+		print(p, semicolon);
 	case When_Stmt:
 		newline_until_pos(p, v.pos);
 		print(p, "when", space);
@@ -970,6 +1218,9 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 			print_expr(p, v.label);
 		}
 
+		if p.config.semicolons {
+			print(p, semicolon);
+		}
 	case:
 		panic(fmt.aprint(stmt.derived));
 	}
@@ -977,7 +1228,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false) {
 	set_source_position(p, stmt.end);
 }
 
-print_decl :: proc(p: ^Printer, decl: ^ast.Decl) {
+print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 
 	using ast;
 
@@ -1032,13 +1283,10 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl) {
 	case Value_Decl:
 		if len(v.attributes) > 0 {
 			newline_until_pos(p, v.attributes[0].pos);
+			print_attributes(p, v.attributes);
 		}
 
-		else {
-			newline_until_pos(p, decl.pos);
-		}
-
-		print_attributes(p, v.attributes);
+		newline_until_pos(p, decl.pos);
 
 		if v.is_using {
 			print(p, "using", space);
@@ -1048,8 +1296,12 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl) {
 
 		seperator := ":";
 
-		if !v.is_mutable {
+		if !v.is_mutable && v.type == nil {
 			seperator = ":: ";
+		}
+
+		else if !v.is_mutable && v.type != nil {
+			seperator = " :";
 		}
 
 		if v.type != nil {
@@ -1069,7 +1321,24 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl) {
 			print(p, "=", space);
 		}
 
+		else if !v.is_mutable && v.type != nil {
+			print(p, space, ":", space);
+		}
+
 		print_exprs(p, v.values, ", ");
+
+		add_semicolon := true;
+
+		for value in v.values {
+			switch a in value.derived {
+			case Proc_Lit, Union_Type, Enum_Type, Struct_Type:
+				add_semicolon = false || called_in_stmt;
+			}
+		}
+
+		if add_semicolon && p.config.semicolons && !p.skip_semicolon {
+			print(p, semicolon);
+		}
 
 	case:
 		panic(fmt.aprint(decl.derived));
@@ -1111,22 +1380,35 @@ print_file :: proc(p: ^Printer, file: ^ast.File) {
 
 print_begin_brace :: proc(p: ^Printer) {
 
-	if p.config.bracket_style == .Allman {
+	if p.config.brace_style == .Allman {
 
 		//only newline when it isn't a empty block
 		if p.last_position.line == p.source_position.line {
 			print(p, newline);
 		}
 
-		print(p, lbrace, indent);
+		print(p, lbrace);
+
+		if !p.skip_indent {
+			print(p, indent);
+		}
 	}
 
-	else if p.config.bracket_style == ._1TBS {
-		print(p, lbrace, indent);
+	else if p.config.brace_style == ._1TBS {
+		print(p, lbrace);
+
+		if !p.skip_indent {
+			print(p, indent);
+		}
 	}
 
 }
 
 print_end_brace :: proc(p: ^Printer) {
-	print(p, unindent, newline, rbrace);
+
+	if !p.skip_indent {
+		print(p, unindent);
+	}
+
+	print(p, newline, rbrace);
 }

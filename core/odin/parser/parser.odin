@@ -1576,9 +1576,11 @@ check_field_flag_prefixes :: proc(p: ^Parser, name_count: int, allowed_flags, se
 		}
 	}
 
+	/*
 	if .Using in allowed_flags && .Using in flags {
 		flags &~= {.Using};
 	}
+	*/
 
 	return flags;
 }
