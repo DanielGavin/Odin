@@ -21,6 +21,7 @@ Config :: struct {
 	semicolons: bool, //Enable semicolons
 	split_multiple_stmts: bool,
 	brace_style: Brace_Style,
+	align_assignments: bool,
 }
 
 default_style := Config {
@@ -31,6 +32,7 @@ default_style := Config {
 	tabs = true,
 	brace_style = ._1TBS,
 	split_multiple_stmts = true,
+	align_assignments = true,
 };
 
 
@@ -48,6 +50,9 @@ Printer :: struct {
 	allocator: mem.Allocator,
 	skip_indent: bool, //skip indentation in blocks¨
 	skip_semicolon: bool,
+	value_decl_aligned_padding: int, //to ensure that assignments and declarations are aligned
+	value_decl_aligned_begin_line: int, //the first line part of the aligned calculation
+	value_decl_aligned_end_line: int, //the last line part of the aligned calculation
 }
 
 Whitespace :: distinct byte;
@@ -711,14 +716,10 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 	case .Invalid:
 		//nothing i guess
 	case .Foreign_Block_Default:
-		panic("what should these calling conv be called");
-		//??
 	}
 
 	print(p, lparen);
 	print_signature_list(p, proc_type.params, ", ");
-
-
 	print(p, rparen);
 
 	if proc_type.results != nil {
@@ -885,9 +886,15 @@ print_signature_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 
 		for name in field.names {
 			if ident, ok := name.derived.(ast.Ident); ok {
+				//for some reason the parser uses _ to mean empty
 				if ident.name != "_" {
 					named = true;
 				}
+			}
+
+			else {
+				//alternative is poly names
+				named = true;
 			}
 		}
 
@@ -953,10 +960,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 
 			set_source_position(p, v.pos);
 
-			for stmt in v.stmts {
-				print(p, newline);
-				print_stmt(p, stmt, false, true);
-			}
+			print_block_stmts(p, v.stmts, true);
 
 			set_source_position(p, v.end);
 
@@ -973,9 +977,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 
 			set_source_position(p, v.pos);
 
-			for stmt in v.stmts {
-				print_stmt(p, stmt, false, true);
-			}
+			print_block_stmts(p, v.stmts);
 
 			set_source_position(p, v.end);
 
@@ -990,9 +992,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 
 			set_source_position(p, v.pos);
 
-			for stmt in v.stmts {
-				print_stmt(p, stmt, false, true);
-			}
+			print_block_stmts(p, v.stmts);
 
 			set_source_position(p, v.end);
 
@@ -1365,6 +1365,8 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 			seperator = " :";
 		}
 
+		//print_space_padding(p, p.value_decl_aligned_padding - get_length_of_names(v.names));
+
 		if v.type != nil {
 			print(p, seperator, space);
 			print_expr(p, v.type);
@@ -1472,4 +1474,73 @@ print_end_brace :: proc(p: ^Printer) {
 	}
 
 	print(p, newline, rbrace);
+}
+
+print_block_stmts :: proc(p: ^Printer, stmts: [] ^ast.Stmt, newline_each := false) {
+	for stmt, i in stmts {
+
+		if newline_each {
+			print(p, newline);
+		}
+
+		if value_decl, ok := stmt.derived.(ast.Value_Decl); ok {
+			set_value_decl_alignment_padding(p, value_decl, stmts[i+1:]);
+		}
+
+		print_stmt(p, stmt, false, true);
+	}
+}
+
+print_space_padding :: proc(p: ^Printer, n: int) {
+
+	for i := 0; i < n; i += 1 {
+		print(p, space);
+	}
+
+}
+
+set_value_decl_alignment_padding :: proc(p: ^Printer, value_decl: ast.Value_Decl, stmts: [] ^ast.Stmt) {
+
+	if p.value_decl_aligned_begin_line <= value_decl.pos.line && value_decl.pos.line <= p.value_decl_aligned_end_line {
+		return;
+	}
+
+	largest_name := get_length_of_names(value_decl.names);
+	last_line := value_decl.pos.line;
+	p.value_decl_aligned_begin_line = last_line;
+
+	for stmt in stmts {
+
+		if next_decl, ok := stmt.derived.(ast.Value_Decl); ok {
+
+			if last_line + 1 != next_decl.pos.line {
+				break;
+			}
+
+			largest_name = max(largest_name, get_length_of_names(next_decl.names));
+			last_line = stmt.pos.line;
+		}
+
+		else {
+			break;
+		}
+	}
+
+	p.value_decl_aligned_end_line = last_line;
+	p.value_decl_aligned_padding = largest_name;
+}
+
+get_length_of_names :: proc(names: [] ^ast.Expr) -> int {
+	sum := 0;
+
+	for name, i in names {
+		ident := name.derived.(ast.Ident);
+		sum += strings.rune_count(ident.name);
+
+		if i != len(names) - 1 {
+			sum += 2; //space and comma
+		}
+	}
+
+	return sum;
 }
