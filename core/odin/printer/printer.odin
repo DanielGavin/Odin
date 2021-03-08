@@ -10,12 +10,12 @@ import "core:mem"
 
 Brace_Style :: enum {
 	_1TBS,
-	Allman,
+	Allman
 }
 
 Alignment_Style :: enum {
 	Align_On_Colon_And_Equals,
-	Align_On_Type_And_Equals,
+	Align_On_Type_And_Equals
 }
 
 Config :: struct {
@@ -27,7 +27,7 @@ Config :: struct {
 	split_multiple_stmts: bool,
 	brace_style: Brace_Style,
 	align_assignments: bool,
-	align_style: Alignment_Style,
+	align_style: Alignment_Style
 }
 
 default_style := Config {
@@ -39,9 +39,8 @@ default_style := Config {
 	brace_style = ._1TBS,
 	split_multiple_stmts = true,
 	align_assignments = true,
-	align_style = .Align_On_Type_And_Equals,
+	align_style = .Align_On_Type_And_Equals
 };
-
 
 Printer :: struct {
 	string_builder: strings.Builder,
@@ -49,67 +48,67 @@ Printer :: struct {
 	source_position: tokenizer.Pos, //the source position from the ast
 	out_position: tokenizer.Pos, //the out position of the written data - TODO(daniel, eventually remove the out_position if it never gets used)
 	last_position: tokenizer.Pos, //the last position from print function
-	whitespaces: [] Whitespace, //buffered whitespaces
+	whitespaces: []Whitespace, //buffered whitespaces
 	current_whitespace: int,
 	depth: int, //the identation depth
-	comments: [dynamic] ^ast.Comment_Group,
+	comments: [dynamic]^ast.Comment_Group,
 	latest_comment_index: int,
 	allocator: mem.Allocator,
 	skip_semicolon: bool,
 	value_decl_aligned_padding: int, //to ensure that assignments and declarations are aligned by name
 	value_decl_aligned_type_padding: int, //to ensure that assignments and declarations are aligned by type
 	value_decl_aligned_begin_line: int, //the first line part of the aligned calculation
-	value_decl_aligned_end_line: int, //the last line part of the aligned calculation
-}
+	value_decl_aligned_end_line: int
+} //the last line part of the aligned calculation
 
 Whitespace :: distinct byte;
 
-newline: Whitespace = '\n';
-space: Whitespace = ' ';
+newline:  Whitespace = '\n';
+space:    Whitespace = ' ';
 unindent: Whitespace = '<';
-indent: Whitespace = '>';
-ignore: Whitespace = '!';
+indent:   Whitespace = '>';
+ignore:   Whitespace = '!';
 
-lbrace: byte = '{';
-rbrace: byte = '}';
-lparen: byte = '(';
-rparen: byte = ')';
+lbrace:    byte = '{';
+rbrace:    byte = '}';
+lparen:    byte = '(';
+rparen:    byte = ')';
 semicolon: byte = ';';
-lbracket: byte = '[';
-rbracket: byte = ']';
-comma: byte = ',';
-dot: byte = '.';
+lbracket:  byte = '[';
+rbracket:  byte = ']';
+comma:     byte = ',';
+dot:       byte = '.';
 
-make_printer :: proc(config: Config, allocator := context.allocator) -> Printer {
+make_printer :: proc (config: Config, allocator := context.allocator) -> Printer {
 	return {
 		string_builder = strings.make_builder(allocator),
 		config = config,
 		source_position = {
 			line = 1,
-			column = 1,
+			column = 1
 		},
 		out_position = {
 			line = 1,
-			column = 1,
+			column = 1
 		},
 		allocator = allocator,
-		whitespaces = make([] Whitespace, 100, allocator),
+		whitespaces = make([]Whitespace, 100, allocator)
 	};
 }
 
-to_string :: proc(printer: Printer) -> string {
+to_string :: proc (printer: Printer) -> string {
 	return strings.to_string(printer.string_builder);
 }
 
-print :: proc(p: ^Printer, args: ..any) {
+print :: proc (p: ^Printer, args: ..any) {
 
 	for arg in args {
 
 		data: string;
-		b: byte;
-		tok: tokenizer.Token;
+		b:    byte;
+		tok:  tokenizer.Token;
 
-		switch a in arg {
+		switch a in arg{
 		case string:
 			data = a;
 		case tokenizer.Token:
@@ -146,19 +145,17 @@ print :: proc(p: ^Printer, args: ..any) {
 
 		write_string(p, next, data);
 	}
-
-
 }
 
-newline_until_pos :: proc(p: ^Printer, pos: tokenizer.Pos) {
+newline_until_pos :: proc (p: ^Printer, pos: tokenizer.Pos) {
 	newline_until_pos_limit(p, pos, p.config.newline_limit);
 }
 
-newline_until_pos_limit :: proc(p: ^Printer, pos: tokenizer.Pos, limit: int) {
+newline_until_pos_limit :: proc (p: ^Printer, pos: tokenizer.Pos, limit: int) {
 
 	lines := min(pos.line - p.source_position.line, limit);
 
-	for i := 0; i < lines; i += 1 {
+	for i := 0; i < lines; i += 1{
 		print(p, newline);
 	}
 
@@ -166,7 +163,7 @@ newline_until_pos_limit :: proc(p: ^Printer, pos: tokenizer.Pos, limit: int) {
 	p.source_position = pos;
 }
 
-comment_before_position :: proc(p: ^Printer, pos: tokenizer.Pos) -> bool {
+comment_before_position :: proc (p: ^Printer, pos: tokenizer.Pos) -> bool {
 
 	if len(p.comments) <= p.latest_comment_index {
 		return false;
@@ -177,26 +174,25 @@ comment_before_position :: proc(p: ^Printer, pos: tokenizer.Pos) -> bool {
 	return comment.pos.offset < pos.offset;
 }
 
-next_comment_group :: proc(p: ^Printer) {
+next_comment_group :: proc (p: ^Printer) {
 	p.latest_comment_index += 1;
 }
 
-prefix_comment_group :: proc(p: ^Printer, last: tokenizer.Pos, pos: tokenizer.Pos, comment_group: ^ast.Comment_Group) -> int {
+prefix_comment_group :: proc (p: ^Printer, last: tokenizer.Pos, pos: tokenizer.Pos, comment_group: ^ast.Comment_Group) -> int {
 
 	//unwind all the newlines from the last position of a non whitespace to the current
 
 	indent_change := 0;
 
-	for i := 0; i < p.current_whitespace; i += 1 {
+	for i := 0; i < p.current_whitespace; i += 1{
 
-		switch w := p.whitespaces[i]; w {
+		switch w := p.whitespaces[i]; w{
 		case newline:
 			p.whitespaces[i] = ignore;
 		case unindent:
 			p.whitespaces[i] = ignore;
 			indent_change -= 1;
 		}
-
 	}
 
 	write_whitespaces(p, p.current_whitespace);
@@ -204,7 +200,7 @@ prefix_comment_group :: proc(p: ^Printer, last: tokenizer.Pos, pos: tokenizer.Po
 	return indent_change;
 }
 
-postfix_comments :: proc(p: ^Printer, pos: tokenizer.Pos, last_comment: ^tokenizer.Token) {
+postfix_comments :: proc (p: ^Printer, pos: tokenizer.Pos, last_comment: ^tokenizer.Token) {
 
 	//after writing all the comments we need to make sure that the token we are writing is newlined correctly
 
@@ -213,13 +209,12 @@ postfix_comments :: proc(p: ^Printer, pos: tokenizer.Pos, last_comment: ^tokeniz
 
 	lines := min(pos.line - last_comment.pos.line - newlines, p.config.newline_limit);
 
-	for i := 0; i < lines; i += 1 {
+	for i := 0; i < lines; i += 1{
 		write_byte(p, '\n');
 	}
-
 }
 
-write_prefix_comment :: proc(p: ^Printer, prev_comment: ^tokenizer.Token, comment: tokenizer.Token) {
+write_prefix_comment :: proc (p: ^Printer, prev_comment: ^tokenizer.Token, comment: tokenizer.Token) {
 
 	//handle the placement of the comment with newlines
 
@@ -242,15 +237,13 @@ write_prefix_comment :: proc(p: ^Printer, prev_comment: ^tokenizer.Token, commen
 
 		lines = min(p.config.newline_limit, lines);
 
-		for i := 0; i < lines; i += 1 {
+		for i := 0; i < lines; i += 1{
 			write_byte(p, '\n');
 		}
-
 	}
-
 }
 
-write_comment :: proc(p: ^Printer, comment: tokenizer.Token) {
+write_comment :: proc (p: ^Printer, comment: tokenizer.Token) {
 
 	if len(comment.text) == 0 {
 		return;
@@ -266,7 +259,7 @@ write_comment :: proc(p: ^Printer, comment: tokenizer.Token) {
 
 		trim_space := true;
 
-		for i := 0; i < len(comment.text); i += 1 {
+		for i := 0; i < len(comment.text); i += 1{
 
 			c := comment.text[i];
 
@@ -278,20 +271,20 @@ write_comment :: proc(p: ^Printer, comment: tokenizer.Token) {
 				continue;
 			}
 
-			else if c == 13 && comment.text[min(c_len-1, i+1)] == 10 {
+			else if c == 13 && comment.text[min(c_len - 1, i + 1)] == 10 {
 				write_byte(p, '\n');
 				trim_space = true;
 				i += 1;
 			}
 
-			else if c == '/' && comment.text[min(c_len-1, i+1)] == '*' {
+			else if c == '/' && comment.text[min(c_len - 1, i + 1)] == '*' {
 				write_string(p, p.source_position, "/*");
 				trim_space = true;
 				p.depth += 1;
 				i += 1;
 			}
 
-			else if c == '*' && comment.text[min(c_len-1, i+1)]  == '/' {
+			else if c == '*' && comment.text[min(c_len - 1, i + 1)] == '/' {
 				p.depth -= 1;
 				trim_space = true;
 				write_string(p, p.source_position, "*/");
@@ -301,13 +294,11 @@ write_comment :: proc(p: ^Printer, comment: tokenizer.Token) {
 			else {
 				write_byte(p, c);
 			}
-
 		}
-
 	}
 }
 
-write_comments :: proc(p: ^Printer, pos: tokenizer.Pos) {
+write_comments :: proc (p: ^Printer, pos: tokenizer.Pos) {
 
 	next := p.last_position;
 	prev_comment: ^tokenizer.Token;
@@ -334,14 +325,13 @@ write_comments :: proc(p: ^Printer, pos: tokenizer.Pos) {
 	if prev_comment != nil {
 		postfix_comments(p, pos, prev_comment);
 	}
-
 }
 
-write_whitespaces :: proc(p: ^Printer, n: int) {
+write_whitespaces :: proc (p: ^Printer, n: int) {
 
-	for i := 0; i < n; i += 1 {
+	for i := 0; i < n; i += 1{
 
-		switch c := p.whitespaces[i]; c {
+		switch c := p.whitespaces[i]; c{
 		case ignore:
 			continue;
 		case indent:
@@ -353,7 +343,6 @@ write_whitespaces :: proc(p: ^Printer, n: int) {
 		case:
 			write_byte(p, cast(byte)p.whitespaces[i]);
 		}
-
 	}
 
 	l := copy(p.whitespaces, p.whitespaces[n:p.current_whitespace]);
@@ -361,7 +350,7 @@ write_whitespaces :: proc(p: ^Printer, n: int) {
 	p.current_whitespace = l;
 }
 
-write_string :: proc(p: ^Printer, pos: tokenizer.Pos, str: string) {
+write_string :: proc (p: ^Printer, pos: tokenizer.Pos, str: string) {
 
 	bytes := len(str);
 	runes := strings.rune_count(str);
@@ -380,7 +369,7 @@ write_string :: proc(p: ^Printer, pos: tokenizer.Pos, str: string) {
 	p.last_position = p.source_position;
 }
 
-write_byte :: proc(p: ^Printer, b: byte) {
+write_byte :: proc (p: ^Printer, b: byte) {
 
 	if p.out_position.column == 1 && b != '\t' && b != ' ' && b != '\n' {
 		write_indent(p);
@@ -405,27 +394,26 @@ write_byte :: proc(p: ^Printer, b: byte) {
 	strings.write_byte(&p.string_builder, b);
 }
 
-write_indent :: proc(p: ^Printer) {
+write_indent :: proc (p: ^Printer) {
 
 	if p.config.tabs {
-		for i := 0; i < p.depth ; i += 1 {
+		for i := 0; i < p.depth; i += 1{
 			write_byte(p, '\t');
 		}
 	}
 
 	else {
-		for i := 0; i < p.depth * p.config.spaces; i += 1 {
+		for i := 0; i < p.depth * p.config.spaces; i += 1{
 			write_byte(p, ' ');
 		}
 	}
-
 }
 
-set_source_position :: proc(p: ^Printer, pos: tokenizer.Pos) {
+set_source_position :: proc (p: ^Printer, pos: tokenizer.Pos) {
 	p.source_position = pos;
 }
 
-print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
+print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 
 	using ast;
 
@@ -435,8 +423,9 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 
 	set_source_position(p, expr.pos);
 
-	switch v in expr.derived {
+	switch v in expr.derived{
 	case Ellipsis:
+		print(p, "..");
 		print_expr(p, v.expr);
 	case Relative_Type:
 		print_expr(p, v.tag);
@@ -491,7 +480,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 			print(p, space, "#maybe");
 		}
 
-		set_source_position(p, v.variants[len(v.variants)-1].pos);
+		set_source_position(p, v.variants[len(v.variants) - 1].pos);
 
 		if v.variants != nil && (len(v.variants) == 0 || v.pos.line == v.end.line) {
 			print(p, space, lbrace);
@@ -514,7 +503,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 			print_expr(p, v.base_type);
 		}
 
-		set_source_position(p, v.fields[len(v.fields)-1].pos);
+		set_source_position(p, v.fields[len(v.fields) - 1].pos);
 
 		if v.fields != nil && (len(v.fields) == 0 || v.pos.line == v.end.line) {
 			print(p, space, lbrace);
@@ -640,7 +629,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 			set_source_position(p, v.elems[0].pos);
 		}
 
-		if len(v.elems) != 0 && v.pos.line != v.elems[len(v.elems)-1].pos.line {
+		if len(v.elems) != 0 && v.pos.line != v.elems[len(v.elems) - 1].pos.line {
 			print_begin_brace(p);
 			print(p, newline);
 			print_exprs(p, v.elems, ", ");
@@ -702,10 +691,9 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 	case:
 		panic(fmt.aprint(expr.derived));
 	}
-
 }
 
-print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
+print_proc_type :: proc (p: ^Printer, proc_type: ast.Proc_Type) {
 
 	print(p, "proc"); //TOOD(ast is missing proc token)
 
@@ -713,7 +701,7 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 		print(p, space);
 	}
 
-	switch proc_type.calling_convention {
+	switch proc_type.calling_convention{
 	case .Odin:
 	case .Contextless:
 		print(p, "\"contextless\"", space);
@@ -724,9 +712,9 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 	case .Fast_Call:
 		print(p, "\"fast\"", space);
 	case .None:
-		//nothing i guess
+			//nothing i guess
 	case .Invalid:
-		//nothing i guess
+			//nothing i guess
 	case .Foreign_Block_Default:
 	}
 
@@ -738,8 +726,7 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 		print(p, space, "->", space);
 
 		use_parens := false;
-		use_named := false;
-
+		use_named  := false;
 
 		if len(proc_type.results.list) > 1 {
 			use_parens = true;
@@ -754,7 +741,6 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 					}
 				}
 			}
-
 		}
 
 		if use_parens {
@@ -766,12 +752,10 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 		else {
 			print_signature_list(p, proc_type.results, ", ");
 		}
-
 	}
-
 }
 
-print_enum_fields :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
+print_enum_fields :: proc (p: ^Printer, list: []^ast.Expr, sep := " ") {
 
 	//print enum fields is like print_exprs, but it can contain fields that can be aligned.
 
@@ -779,13 +763,13 @@ print_enum_fields :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 		return;
 	}
 
-	if list[0].pos.line == list[len(list)-1].pos.line {
+	if list[0].pos.line == list[len(list) - 1].pos.line {
 		//if everything is on one line, then it can be treated the same way as print_exprs
 		print_exprs(p, list, sep);
 		return;
 	}
 
-	largest := 0;
+	largest          := 0;
 	last_field_value := 0;
 
 	//first find all the field values and find the largest name
@@ -796,9 +780,7 @@ print_enum_fields :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 			if ident, ok := field_value.field.derived.(ast.Ident); ok {
 				largest = max(largest, strings.rune_count(ident.name));
 			}
-
 		}
-
 	}
 
 	for expr, i in list {
@@ -817,46 +799,41 @@ print_enum_fields :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 			else {
 				print_expr(p, expr);
 			}
-
 		}
 
 		else {
 			print_expr(p, expr);
 		}
 
-
-
-		if i != len(list) - 1{
+		if i != len(list) - 1 {
 			print(p, sep);
 		}
-
 	}
-
-
 }
 
-print_exprs :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
+print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ") {
 
 	if len(list) == 0 {
 		return;
 	}
 
 	//all the expression are on the line
-	if list[0].pos.line == list[len(list)-1].pos.line {
+	if list[0].pos.line == list[len(list) - 1].pos.line {
 
 		for expr, i in list {
 
 			print_expr(p, expr);
 
-			if i != len(list) - 1{
+			if i != len(list) - 1 {
 				print(p, sep);
 			}
 		}
-
 	}
 
+	else
+
 	//we have to newline the expressions to respect the source
-	else {
+	{
 
 		for expr, i in list {
 
@@ -864,16 +841,14 @@ print_exprs :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 
 			print_expr(p, expr);
 
-			if i != len(list) - 1{
+			if i != len(list) - 1 {
 				print(p, sep);
 			}
 		}
-
 	}
-
 }
 
-print_binary_expr :: proc(p: ^Printer, binary: ast.Binary_Expr) {
+print_binary_expr :: proc (p: ^Printer, binary: ast.Binary_Expr) {
 
 	if v, ok := binary.left.derived.(ast.Binary_Expr); ok {
 		print_binary_expr(p, v);
@@ -900,10 +875,9 @@ print_binary_expr :: proc(p: ^Printer, binary: ast.Binary_Expr) {
 	else {
 		print_expr(p, binary.right);
 	}
-
 }
 
-print_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
+print_field_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") {
 
 	if list.list == nil {
 		return;
@@ -940,10 +914,9 @@ print_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 			print(p, sep);
 		}
 	}
-
 }
 
-print_signature_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
+print_signature_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") {
 
 	if list.list == nil {
 		return;
@@ -998,11 +971,9 @@ print_signature_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 			print(p, sep);
 		}
 	}
-
 }
 
-
-print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stmt := false) {
+print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stmt := false) {
 
 	using ast;
 
@@ -1010,7 +981,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 		return;
 	}
 
-	switch v in stmt.derived {
+	switch v in stmt.derived{
 	case Value_Decl:
 		print_decl(p, cast(^Decl)stmt, true);
 		return;
@@ -1022,7 +993,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 		return;
 	}
 
-	switch v in stmt.derived {
+	switch v in stmt.derived{
 	case Using_Stmt:
 		newline_until_pos(p, v.pos);
 		print(p, "using", space);
@@ -1046,7 +1017,6 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 			if !empty_block {
 				print_end_brace(p);
 			}
-
 		}
 
 		else if v.pos.line == v.end.line {
@@ -1064,6 +1034,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 				print(p, rbrace);
 			}
 		}
+
 		else {
 			if !empty_block {
 				print_begin_brace(p);
@@ -1149,7 +1120,6 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 		}
 
 		print_expr(p, v.cond);
-		print(p, space);
 
 		print_stmt(p, v.body);
 	case Case_Clause:
@@ -1163,7 +1133,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 			print_exprs(p, v.list, ",");
 		}
 
-		print(p, v.terminator, space);
+		print(p, v.terminator);
 
 		for stmt in v.body {
 			print_stmt(p, stmt, false, true);
@@ -1187,22 +1157,20 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 
 		print_stmt(p, v.tag);
 
-		print(p, space);
-
 		print_stmt(p, v.body);
 	case Assign_Stmt:
 		newline_until_pos(p, v.pos);
 
 		/*
-		if len(v.lhs) == 1 {
+			if len(v.lhs) == 1 {
 
 			if ident, ok := v.lhs[0].derived.(Ident); ok && ident.name == "_" {
-				print(p, v.op, space);
-				print_exprs(p, v.rhs, ", ");
-				return;
+			print(p, v.op, space);
+			print_exprs(p, v.rhs, ", ");
+			return;
 			}
 
-		}
+			}
 		*/
 
 		print_exprs(p, v.lhs, ", ");
@@ -1295,7 +1263,6 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 		print(p, "for", space);
 		print_expr(p, v.val0);
 
-
 		if v.val1 != nil {
 			print(p, ",", space);
 			print_expr(p, v.val1);
@@ -1365,7 +1332,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 	set_source_position(p, stmt.end);
 }
 
-print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
+print_decl :: proc (p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 
 	using ast;
 
@@ -1373,7 +1340,7 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 		return;
 	}
 
-	switch v in decl.derived {
+	switch v in decl.derived{
 	case When_Stmt:
 		print_stmt(p, cast(^Stmt)decl);
 	case Foreign_Import_Decl:
@@ -1453,17 +1420,20 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 			}
 
 			else if in_value_decl_alignment(p, v) && p.config.align_style == .Align_On_Colon_And_Equals {
-				print_space_padding(p, p.value_decl_aligned_type_padding - (v.type.end.column-v.type.pos.column));
+				print_space_padding(p, p.value_decl_aligned_type_padding - (v.type.end.column - v.type.pos.column));
 			}
 
 			print_expr(p, v.type);
 
-			if in_value_decl_alignment(p, v) && p.config.align_style == .Align_On_Type_And_Equals {
-				print_space_padding(p, p.value_decl_aligned_type_padding - (v.type.end.column-v.type.pos.column));
+			if in_value_decl_alignment(p, v) && p.config.align_style == .Align_On_Type_And_Equals && len(v.values) != 0 {
+				print_space_padding(p, p.value_decl_aligned_type_padding - (v.type.end.column - v.type.pos.column));
 			}
 		}
 
 		else {
+			if in_value_decl_alignment(p, v) && p.config.align_style == .Align_On_Type_And_Equals {
+				print_space_padding(p, p.value_decl_aligned_padding - get_length_of_names(v.names));
+			}
 			print(p, space, seperator);
 		}
 
@@ -1484,8 +1454,8 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 		add_semicolon := true;
 
 		for value in v.values {
-			switch a in value.derived {
-			case Proc_Lit, Union_Type, Enum_Type, Struct_Type:
+			switch a in value.derived{
+			case Proc_Lit,Union_Type,Enum_Type,Struct_Type:
 				add_semicolon = false || called_in_stmt;
 			}
 		}
@@ -1497,10 +1467,9 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 	case:
 		panic(fmt.aprint(decl.derived));
 	}
-
 }
 
-print_attributes :: proc(p: ^Printer, attributes: [dynamic] ^ast.Attribute) {
+print_attributes :: proc (p: ^Printer, attributes: [dynamic]^ast.Attribute) {
 
 	if len(attributes) == 0 {
 		return;
@@ -1515,24 +1484,26 @@ print_attributes :: proc(p: ^Printer, attributes: [dynamic] ^ast.Attribute) {
 		if len(attributes) - 1 != i {
 			print(p, newline);
 		}
-
 	}
-
 }
 
-print_file :: proc(p: ^Printer, file: ^ast.File) {
+print_file :: proc (p: ^Printer, file: ^ast.File) {
 
 	p.comments = file.comments;
 
 	print(p, file.pkg_token, space, file.pkg_name);
 
-	for decl in file.decls {
+	for decl, i in file.decls {
+
+		if value_decl, ok := decl.derived.(ast.Value_Decl); ok {
+			set_value_decl_alignment_padding(p, value_decl, file.decls[i + 1:]);
+		}
+
 		print_decl(p, cast(^ast.Decl)decl);
 	}
-
 }
 
-print_begin_brace :: proc(p: ^Printer) {
+print_begin_brace :: proc (p: ^Printer) {
 
 	if p.config.brace_style == .Allman {
 
@@ -1549,15 +1520,14 @@ print_begin_brace :: proc(p: ^Printer) {
 		print(p, lbrace);
 		print(p, indent);
 	}
-
 }
 
-print_end_brace :: proc(p: ^Printer) {
+print_end_brace :: proc (p: ^Printer) {
 	print(p, unindent);
 	print(p, newline, rbrace);
 }
 
-print_block_stmts :: proc(p: ^Printer, stmts: [] ^ast.Stmt, newline_each := false) {
+print_block_stmts :: proc (p: ^Printer, stmts: []^ast.Stmt, newline_each := false) {
 	for stmt, i in stmts {
 
 		if newline_each {
@@ -1565,29 +1535,28 @@ print_block_stmts :: proc(p: ^Printer, stmts: [] ^ast.Stmt, newline_each := fals
 		}
 
 		if value_decl, ok := stmt.derived.(ast.Value_Decl); ok {
-			set_value_decl_alignment_padding(p, value_decl, stmts[i+1:]);
+			set_value_decl_alignment_padding(p, value_decl, stmts[i + 1:]);
 		}
 
 		print_stmt(p, stmt, false, true);
 	}
 }
 
-print_space_padding :: proc(p: ^Printer, n: int) {
+print_space_padding :: proc (p: ^Printer, n: int) {
 
-	for i := 0; i < n; i += 1 {
+	for i := 0; i < n; i += 1{
 		print(p, space);
 	}
-
 }
 
-set_value_decl_alignment_padding :: proc(p: ^Printer, value_decl: ast.Value_Decl, stmts: [] ^ast.Stmt) {
+set_value_decl_alignment_padding :: proc (p: ^Printer, value_decl: ast.Value_Decl, stmts: []^ast.Stmt) {
 
 	if p.value_decl_aligned_begin_line <= value_decl.pos.line && value_decl.pos.line <= p.value_decl_aligned_end_line {
 		return;
 	}
 
 	largest_name := get_length_of_names(value_decl.names);
-	last_line := value_decl.pos.line;
+	last_line    := value_decl.pos.line;
 	p.value_decl_aligned_begin_line = last_line;
 
 	largest_type := 0;
@@ -1600,7 +1569,15 @@ set_value_decl_alignment_padding :: proc(p: ^Printer, value_decl: ast.Value_Decl
 
 		if next_decl, ok := stmt.derived.(ast.Value_Decl); ok {
 
-			if last_line + 1 != next_decl.pos.line {
+			if last_line + 1 != next_decl.pos.line || value_decl.is_mutable != next_decl.is_mutable {
+				break;
+			}
+
+			if value_decl.type == nil && next_decl.type != nil {
+				break;
+			}
+
+			if value_decl.type != nil && next_decl.type == nil {
 				break;
 			}
 
@@ -1623,7 +1600,7 @@ set_value_decl_alignment_padding :: proc(p: ^Printer, value_decl: ast.Value_Decl
 	p.value_decl_aligned_type_padding = largest_type;
 }
 
-get_length_of_names :: proc(names: [] ^ast.Expr) -> int {
+get_length_of_names :: proc (names: []^ast.Expr) -> int {
 	sum := 0;
 
 	for name, i in names {
@@ -1638,6 +1615,6 @@ get_length_of_names :: proc(names: [] ^ast.Expr) -> int {
 	return sum;
 }
 
-in_value_decl_alignment :: proc(p: ^Printer, v: ast.Value_Decl) -> bool {
+in_value_decl_alignment :: proc (p: ^Printer, v: ast.Value_Decl) -> bool {
 	return p.config.align_assignments && p.value_decl_aligned_begin_line <= v.pos.line && v.pos.line <= p.value_decl_aligned_end_line;
 }
