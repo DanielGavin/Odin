@@ -13,6 +13,11 @@ Brace_Style :: enum {
 	Allman,
 }
 
+Alignment_Style :: enum {
+	Align_On_Colon_And_Equals,
+	Align_On_Type_And_Equals,
+}
+
 Config :: struct {
 	spaces: int, //Spaces per indentation
 	newline_limit: int, //The limit of newlines between statements and declarations.
@@ -22,6 +27,7 @@ Config :: struct {
 	split_multiple_stmts: bool,
 	brace_style: Brace_Style,
 	align_assignments: bool,
+	align_style: Alignment_Style,
 }
 
 default_style := Config {
@@ -33,6 +39,7 @@ default_style := Config {
 	brace_style = ._1TBS,
 	split_multiple_stmts = true,
 	align_assignments = true,
+	align_style = .Align_On_Type_And_Equals,
 };
 
 
@@ -49,7 +56,8 @@ Printer :: struct {
 	latest_comment_index: int,
 	allocator: mem.Allocator,
 	skip_semicolon: bool,
-	value_decl_aligned_padding: int, //to ensure that assignments and declarations are aligned
+	value_decl_aligned_padding: int, //to ensure that assignments and declarations are aligned by name
+	value_decl_aligned_type_padding: int, //to ensure that assignments and declarations are aligned by type
 	value_decl_aligned_begin_line: int, //the first line part of the aligned calculation
 	value_decl_aligned_end_line: int, //the last line part of the aligned calculation
 }
@@ -780,7 +788,7 @@ print_enum_fields :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 	largest := 0;
 	last_field_value := 0;
 
-	//first find all the field values and find the largest namea
+	//first find all the field values and find the largest name
 	for expr, i in list {
 
 		if field_value, ok := expr.derived.(ast.Field_Value); ok {
@@ -791,8 +799,39 @@ print_enum_fields :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 
 		}
 
-		fmt.println(expr.derived);
 	}
+
+	for expr, i in list {
+
+		newline_until_pos_limit(p, expr.pos, 1);
+
+		if field_value, ok := expr.derived.(ast.Field_Value); ok && p.config.align_assignments {
+
+			if ident, ok := field_value.field.derived.(ast.Ident); ok {
+				print_expr(p, field_value.field);
+				print_space_padding(p, largest - strings.rune_count(ident.name) + 1);
+				print(p, "=", space);
+				print_expr(p, field_value.value);
+			}
+
+			else {
+				print_expr(p, expr);
+			}
+
+		}
+
+		else {
+			print_expr(p, expr);
+		}
+
+
+
+		if i != len(list) - 1{
+			print(p, sep);
+		}
+
+	}
+
 
 }
 
@@ -937,8 +976,12 @@ print_signature_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 		if named {
 			print_exprs(p, field.names, ", ");
 
-			if len(field.names) != 0 {
+			if len(field.names) != 0 && field.default_value == nil {
 				print(p, ": ");
+			}
+
+			else {
+				print(p, space);
 			}
 		}
 
@@ -1398,13 +1441,26 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 			seperator = " :";
 		}
 
-		if p.config.align_assignments && p.value_decl_aligned_begin_line <= v.pos.line && v.pos.line <= p.value_decl_aligned_end_line {
+		if in_value_decl_alignment(p, v) && p.config.align_style == .Align_On_Colon_And_Equals {
 			print_space_padding(p, p.value_decl_aligned_padding - get_length_of_names(v.names));
 		}
 
 		if v.type != nil {
 			print(p, seperator, space);
+
+			if in_value_decl_alignment(p, v) && p.config.align_style == .Align_On_Type_And_Equals {
+				print_space_padding(p, p.value_decl_aligned_padding - get_length_of_names(v.names));
+			}
+
+			else if in_value_decl_alignment(p, v) && p.config.align_style == .Align_On_Colon_And_Equals {
+				print_space_padding(p, p.value_decl_aligned_type_padding - (v.type.end.column-v.type.pos.column));
+			}
+
 			print_expr(p, v.type);
+
+			if in_value_decl_alignment(p, v) && p.config.align_style == .Align_On_Type_And_Equals {
+				print_space_padding(p, p.value_decl_aligned_type_padding - (v.type.end.column-v.type.pos.column));
+			}
 		}
 
 		else {
@@ -1534,6 +1590,12 @@ set_value_decl_alignment_padding :: proc(p: ^Printer, value_decl: ast.Value_Decl
 	last_line := value_decl.pos.line;
 	p.value_decl_aligned_begin_line = last_line;
 
+	largest_type := 0;
+
+	if value_decl.type != nil {
+		largest_type = value_decl.type.end.column - value_decl.type.pos.column;
+	}
+
 	for stmt in stmts {
 
 		if next_decl, ok := stmt.derived.(ast.Value_Decl); ok {
@@ -1543,6 +1605,11 @@ set_value_decl_alignment_padding :: proc(p: ^Printer, value_decl: ast.Value_Decl
 			}
 
 			largest_name = max(largest_name, get_length_of_names(next_decl.names));
+
+			if next_decl.type != nil {
+				largest_type = max(largest_type, next_decl.type.end.column - next_decl.type.pos.column);
+			}
+
 			last_line = stmt.pos.line;
 		}
 
@@ -1553,6 +1620,7 @@ set_value_decl_alignment_padding :: proc(p: ^Printer, value_decl: ast.Value_Decl
 
 	p.value_decl_aligned_end_line = last_line;
 	p.value_decl_aligned_padding = largest_name;
+	p.value_decl_aligned_type_padding = largest_type;
 }
 
 get_length_of_names :: proc(names: [] ^ast.Expr) -> int {
@@ -1568,4 +1636,8 @@ get_length_of_names :: proc(names: [] ^ast.Expr) -> int {
 	}
 
 	return sum;
+}
+
+in_value_decl_alignment :: proc(p: ^Printer, v: ast.Value_Decl) -> bool {
+	return p.config.align_assignments && p.value_decl_aligned_begin_line <= v.pos.line && v.pos.line <= p.value_decl_aligned_end_line;
 }
