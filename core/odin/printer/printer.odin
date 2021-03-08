@@ -48,7 +48,6 @@ Printer :: struct {
 	comments: [dynamic] ^ast.Comment_Group,
 	latest_comment_index: int,
 	allocator: mem.Allocator,
-	skip_indent: bool, //skip indentation in blocks¨
 	skip_semicolon: bool,
 	value_decl_aligned_padding: int, //to ensure that assignments and declarations are aligned
 	value_decl_aligned_begin_line: int, //the first line part of the aligned calculation
@@ -502,6 +501,11 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 	case Enum_Type:
 		print(p, "enum");
 
+		if v.base_type != nil {
+			print(p, space);
+			print_expr(p, v.base_type);
+		}
+
 		set_source_position(p, v.fields[len(v.fields)-1].pos);
 
 		if v.fields != nil && (len(v.fields) == 0 || v.pos.line == v.end.line) {
@@ -514,7 +518,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 			print(p, space);
 			print_begin_brace(p);
 			print(p, newline);
-			print_exprs(p, v.fields, ",");
+			print_enum_fields(p, v.fields, ",");
 			print_end_brace(p);
 		}
 
@@ -759,6 +763,39 @@ print_proc_type :: proc(p: ^Printer, proc_type: ast.Proc_Type) {
 
 }
 
+print_enum_fields :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
+
+	//print enum fields is like print_exprs, but it can contain fields that can be aligned.
+
+	if len(list) == 0 {
+		return;
+	}
+
+	if list[0].pos.line == list[len(list)-1].pos.line {
+		//if everything is on one line, then it can be treated the same way as print_exprs
+		print_exprs(p, list, sep);
+		return;
+	}
+
+	largest := 0;
+	last_field_value := 0;
+
+	//first find all the field values and find the largest namea
+	for expr, i in list {
+
+		if field_value, ok := expr.derived.(ast.Field_Value); ok {
+
+			if ident, ok := field_value.field.derived.(ast.Ident); ok {
+				largest = max(largest, strings.rune_count(ident.name));
+			}
+
+		}
+
+		fmt.println(expr.derived);
+	}
+
+}
+
 print_exprs :: proc(p: ^Printer, list: []^ast.Expr, sep := " ") {
 
 	if len(list) == 0 {
@@ -826,7 +863,6 @@ print_binary_expr :: proc(p: ^Printer, binary: ast.Binary_Expr) {
 	}
 
 }
-
 
 print_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 
@@ -1070,15 +1106,13 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 		}
 
 		print_expr(p, v.cond);
-
 		print(p, space);
 
-		p.skip_indent = true;
 		print_stmt(p, v.body);
-		p.skip_indent = false;
 	case Case_Clause:
 		newline_until_pos(p, v.pos);
 
+		print(p, unindent); //undo block stmt indentation
 		print(p, "case", indent);
 
 		if v.list != nil {
@@ -1093,6 +1127,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 		}
 
 		print(p, unindent);
+		print(p, indent); //undo block stmt indentation
 	case Type_Switch_Stmt:
 		newline_until_pos(p, v.pos);
 
@@ -1111,9 +1146,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 
 		print(p, space);
 
-		p.skip_indent = true;
 		print_stmt(p, v.body);
-		p.skip_indent = false;
 	case Assign_Stmt:
 		newline_until_pos(p, v.pos);
 
@@ -1365,7 +1398,9 @@ print_decl :: proc(p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 			seperator = " :";
 		}
 
-		//print_space_padding(p, p.value_decl_aligned_padding - get_length_of_names(v.names));
+		if p.config.align_assignments && p.value_decl_aligned_begin_line <= v.pos.line && v.pos.line <= p.value_decl_aligned_end_line {
+			print_space_padding(p, p.value_decl_aligned_padding - get_length_of_names(v.names));
+		}
 
 		if v.type != nil {
 			print(p, seperator, space);
@@ -1451,28 +1486,18 @@ print_begin_brace :: proc(p: ^Printer) {
 		}
 
 		print(p, lbrace);
-
-		if !p.skip_indent {
-			print(p, indent);
-		}
+		print(p, indent);
 	}
 
 	else if p.config.brace_style == ._1TBS {
 		print(p, lbrace);
-
-		if !p.skip_indent {
-			print(p, indent);
-		}
+		print(p, indent);
 	}
 
 }
 
 print_end_brace :: proc(p: ^Printer) {
-
-	if !p.skip_indent {
-		print(p, unindent);
-	}
-
+	print(p, unindent);
 	print(p, newline, rbrace);
 }
 
