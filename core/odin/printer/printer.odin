@@ -27,7 +27,8 @@ Config :: struct {
 	split_multiple_stmts: bool,
 	brace_style: Brace_Style,
 	align_assignments: bool,
-	align_style: Alignment_Style
+	align_style: Alignment_Style,
+	indent_cases: bool
 }
 
 default_style := Config {
@@ -39,7 +40,8 @@ default_style := Config {
 	brace_style = ._1TBS,
 	split_multiple_stmts = true,
 	align_assignments = true,
-	align_style = .Align_On_Type_And_Equals
+	align_style = .Align_On_Type_And_Equals,
+	indent_cases = false,
 };
 
 Printer :: struct {
@@ -58,8 +60,8 @@ Printer :: struct {
 	value_decl_aligned_padding: int, //to ensure that assignments and declarations are aligned by name
 	value_decl_aligned_type_padding: int, //to ensure that assignments and declarations are aligned by type
 	value_decl_aligned_begin_line: int, //the first line part of the aligned calculation
-	value_decl_aligned_end_line: int
-} //the last line part of the aligned calculation
+	value_decl_aligned_end_line: int //the last line part of the aligned calculation
+}
 
 Whitespace :: distinct byte;
 
@@ -554,7 +556,8 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print(p, space);
 			print_begin_brace(p);
 			print(p, newline);
-			print_field_list(p, v.fields, ",");
+			print_struct_field_list(p, v.fields, ",");
+			set_source_position(p, v.end); //should really be the source position of the brace(no token)
 			print_end_brace(p);
 		}
 
@@ -712,9 +715,9 @@ print_proc_type :: proc (p: ^Printer, proc_type: ast.Proc_Type) {
 	case .Fast_Call:
 		print(p, "\"fast\"", space);
 	case .None:
-			//nothing i guess
+		//nothing i guess
 	case .Invalid:
-			//nothing i guess
+		//nothing i guess
 	case .Foreign_Block_Default:
 	}
 
@@ -875,6 +878,51 @@ print_binary_expr :: proc (p: ^Printer, binary: ast.Binary_Expr) {
 	else {
 		print_expr(p, binary.right);
 	}
+}
+
+print_struct_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
+
+	if list.list == nil {
+		return;
+	}
+
+	largest := 0;
+
+	for field, i in list.list {
+		largest = max(largest, get_length_of_names(field.names));
+	}
+
+	for field, i in list.list {
+
+		newline_until_pos_limit(p, field.pos, 1);
+
+		if .Using in field.flags {
+			print(p, "using", space);
+		}
+
+		print_exprs(p, field.names, ", ");
+
+		if len(field.names) != 0 {
+			print(p, ": ");
+		}
+
+		if field.type == nil {
+			panic("struct field has to have types");
+		}
+
+		print_space_padding(p, largest - get_length_of_names(field.names));
+
+		print_expr(p, field.type);
+
+		if field.tag.text != "" {
+			print(p, space, field.tag);
+		}
+
+		if i != len(list.list) - 1 {
+			print(p, sep);
+		}
+	}
+
 }
 
 print_field_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") {
@@ -1120,12 +1168,15 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 		}
 
 		print_expr(p, v.cond);
-
+		print(p, space);
 		print_stmt(p, v.body);
 	case Case_Clause:
 		newline_until_pos(p, v.pos);
 
-		print(p, unindent); //undo block stmt indentation
+		if !p.config.indent_cases {
+			print(p, unindent);
+		}
+
 		print(p, "case", indent);
 
 		if v.list != nil {
@@ -1140,7 +1191,10 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 		}
 
 		print(p, unindent);
-		print(p, indent); //undo block stmt indentation
+
+		if !p.config.indent_cases {
+			print(p, indent);
+		}
 	case Type_Switch_Stmt:
 		newline_until_pos(p, v.pos);
 
@@ -1156,7 +1210,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 		print(p, "switch", space);
 
 		print_stmt(p, v.tag);
-
+		print(p, space);
 		print_stmt(p, v.body);
 	case Assign_Stmt:
 		newline_until_pos(p, v.pos);
