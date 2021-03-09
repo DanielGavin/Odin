@@ -864,6 +864,8 @@ print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", trailing := fal
 
 print_binary_expr :: proc (p: ^Printer, binary: ast.Binary_Expr) {
 
+	newline_until_pos(p, binary.left.pos);
+
 	if v, ok := binary.left.derived.(ast.Binary_Expr); ok {
 		print_binary_expr(p, v);
 	}
@@ -1250,7 +1252,16 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 
 		print(p, space, v.op, space);
 
-		print_exprs(p, v.rhs, ", ");
+		if block_stmt {
+			//experimenting with indenting the newlines in assigments
+			print(p, indent);
+			print_exprs(p, v.rhs, ", ");
+			print(p, unindent);
+		}
+
+		else {
+			print_exprs(p, v.rhs, ", ");
+		}
 
 		if block_stmt && p.config.semicolons {
 			print(p, semicolon);
