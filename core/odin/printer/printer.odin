@@ -60,7 +60,10 @@ Printer :: struct {
 	value_decl_aligned_padding: int, //to ensure that assignments and declarations are aligned by name
 	value_decl_aligned_type_padding: int, //to ensure that assignments and declarations are aligned by type
 	value_decl_aligned_begin_line: int, //the first line part of the aligned calculation
-	value_decl_aligned_end_line: int //the last line part of the aligned calculation
+	value_decl_aligned_end_line: int, //the last line part of the aligned calculation
+	assign_aligned_padding: int, //ast.Assign_Stmt
+	assign_aligned_begin_line: int,
+	assign_aligned_end_line: int,
 }
 
 Whitespace :: distinct byte;
@@ -494,7 +497,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print(p, space);
 			print_begin_brace(p);
 			print(p, newline);
-			print_exprs(p, v.variants, ",");
+			print_exprs(p, v.variants, ",", true);
 			print_end_brace(p);
 		}
 	case Enum_Type:
@@ -811,10 +814,14 @@ print_enum_fields :: proc (p: ^Printer, list: []^ast.Expr, sep := " ") {
 		if i != len(list) - 1 {
 			print(p, sep);
 		}
+
+		else {
+			print(p, strings.trim_space(sep));
+		}
 	}
 }
 
-print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ") {
+print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", trailing := false) {
 
 	if len(list) == 0 {
 		return;
@@ -846,6 +853,10 @@ print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ") {
 
 			if i != len(list) - 1 {
 				print(p, sep);
+			}
+
+			else if trailing {
+				print(p, strings.trim_space(sep));
 			}
 		}
 	}
@@ -920,6 +931,10 @@ print_struct_field_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "") {
 
 		if i != len(list.list) - 1 {
 			print(p, sep);
+		}
+
+		else{
+			print(p, strings.trim_space(sep));
 		}
 	}
 
@@ -1228,10 +1243,16 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 		*/
 
 		print_exprs(p, v.lhs, ", ");
+
+		if p.config.align_assignments && p.assign_aligned_begin_line <= v.pos.line && v.pos.line <= p.assign_aligned_end_line {
+			print_space_padding(p, p.assign_aligned_padding - get_length_of_names(v.lhs));
+		}
+
 		print(p, space, v.op, space);
+
 		print_exprs(p, v.rhs, ", ");
 
-		if block_stmt {
+		if block_stmt && p.config.semicolons {
 			print(p, semicolon);
 		}
 	case Expr_Stmt:
@@ -1592,6 +1613,10 @@ print_block_stmts :: proc (p: ^Printer, stmts: []^ast.Stmt, newline_each := fals
 			set_value_decl_alignment_padding(p, value_decl, stmts[i + 1:]);
 		}
 
+		else if assignment_stmt, ok := stmt.derived.(ast.Assign_Stmt); ok {
+			set_assign_alignment_padding(p, assignment_stmt, stmts[i + 1:]);
+		}
+
 		print_stmt(p, stmt, false, true);
 	}
 }
@@ -1606,6 +1631,7 @@ print_space_padding :: proc (p: ^Printer, n: int) {
 set_value_decl_alignment_padding :: proc (p: ^Printer, value_decl: ast.Value_Decl, stmts: []^ast.Stmt) {
 
 	if p.value_decl_aligned_begin_line <= value_decl.pos.line && value_decl.pos.line <= p.value_decl_aligned_end_line {
+		//we have already calculated it for this line
 		return;
 	}
 
@@ -1652,6 +1678,38 @@ set_value_decl_alignment_padding :: proc (p: ^Printer, value_decl: ast.Value_Dec
 	p.value_decl_aligned_end_line = last_line;
 	p.value_decl_aligned_padding = largest_name;
 	p.value_decl_aligned_type_padding = largest_type;
+}
+
+set_assign_alignment_padding :: proc (p: ^Printer, assign: ast.Assign_Stmt, stmts: []^ast.Stmt) {
+
+	if p.assign_aligned_begin_line <= assign.pos.line && assign.pos.line <= p.assign_aligned_end_line {
+		//we have already calculated it for this line
+		return;
+	}
+
+	largest_name := get_length_of_names(assign.lhs);
+	last_line    := assign.pos.line;
+	p.assign_aligned_begin_line = last_line;
+
+	for stmt in stmts {
+
+		if next_assign, ok := stmt.derived.(ast.Assign_Stmt); ok {
+
+			if last_line + 1 != next_assign.pos.line || len(assign.lhs) != len(next_assign.lhs) {
+				break;
+			}
+
+			largest_name = max(largest_name, get_length_of_names(next_assign.lhs));
+			last_line = stmt.pos.line;
+		}
+
+		else {
+			break;
+		}
+	}
+
+	p.assign_aligned_end_line = last_line;
+	p.assign_aligned_padding = largest_name;
 }
 
 get_length_of_names :: proc (names: []^ast.Expr) -> int {
