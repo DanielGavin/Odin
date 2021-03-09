@@ -286,7 +286,7 @@ write_comment :: proc (p: ^Printer, comment: tokenizer.Token) {
 				write_string(p, p.source_position, "/*");
 				trim_space = true;
 				p.depth += 1;
-				i += 1;
+				i       += 1;
 			}
 
 			else if c == '*' && comment.text[min(c_len - 1, i + 1)] == '/' {
@@ -317,7 +317,7 @@ write_comments :: proc (p: ^Printer, pos: tokenizer.Pos) {
 		for comment, i in comment_group.list {
 			write_prefix_comment(p, prev_comment, comment);
 			write_comment(p, comment);
-			next = comment.pos;
+			next         = comment.pos;
 			prev_comment = &comment_group.list[i];
 		}
 
@@ -367,8 +367,8 @@ write_string :: proc (p: ^Printer, pos: tokenizer.Pos, str: string) {
 	p.source_position = pos;
 	p.source_position.offset += bytes;
 	p.source_position.column += runes;
-	p.out_position.offset += bytes;
-	p.out_position.column += runes;
+	p.out_position.offset    += bytes;
+	p.out_position.column    += runes;
 	strings.write_string(&p.string_builder, str);
 
 	p.last_position = p.source_position;
@@ -382,18 +382,18 @@ write_byte :: proc (p: ^Printer, b: byte) {
 
 	if b == '\n' {
 		p.source_position.column = 1;
-		p.source_position.line += 1;
+		p.source_position.line   += 1;
 		p.source_position.offset += 1;
 		p.out_position.column = 1;
-		p.out_position.line += 1;
+		p.out_position.line   += 1;
 		p.out_position.offset += 1;
 	}
 
 	else {
 		p.source_position.offset += 1;
-		p.out_position.offset += 1;
+		p.out_position.offset    += 1;
 		p.source_position.column += 1;
-		p.out_position.column += 1;
+		p.out_position.column    += 1;
 	}
 
 	strings.write_byte(&p.string_builder, b);
@@ -1685,8 +1685,8 @@ set_value_decl_alignment_padding :: proc (p: ^Printer, value_decl: ast.Value_Dec
 		}
 	}
 
-	p.value_decl_aligned_end_line = last_line;
-	p.value_decl_aligned_padding = largest_name;
+	p.value_decl_aligned_end_line     = last_line;
+	p.value_decl_aligned_padding      = largest_name;
 	p.value_decl_aligned_type_padding = largest_type;
 }
 
@@ -1705,12 +1705,12 @@ set_assign_alignment_padding :: proc (p: ^Printer, assign: ast.Assign_Stmt, stmt
 
 		if next_assign, ok := stmt.derived.(ast.Assign_Stmt); ok {
 
-			if last_line + 1 != next_assign.pos.line || len(assign.lhs) != len(next_assign.lhs) || assign.op != next_assign.op {
+			if last_line + 1 != next_assign.pos.line || len(assign.lhs) != len(next_assign.lhs) || assign.op.kind != next_assign.op.kind {
 				break;
 			}
 
 			largest_name = max(largest_name, get_length_of_names(next_assign.lhs));
-			last_line = stmt.pos.line;
+			last_line    = stmt.pos.line;
 		}
 
 		else {
@@ -1719,7 +1719,7 @@ set_assign_alignment_padding :: proc (p: ^Printer, assign: ast.Assign_Stmt, stmt
 	}
 
 	p.assign_aligned_end_line = last_line;
-	p.assign_aligned_padding = largest_name;
+	p.assign_aligned_padding  = largest_name;
 }
 
 get_length_of_names :: proc (names: []^ast.Expr) -> int {
