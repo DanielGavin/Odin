@@ -429,6 +429,78 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 	set_source_position(p, expr.pos);
 
 	switch v in expr.derived {
+	case Inline_Asm_Expr:
+		//TEMP
+		//this is probably not fully done, but need more examples
+		/*
+			Inline_Asm_Expr :: struct {
+			using node: Expr,
+			tok:                tokenizer.Token,
+			param_types:        []^Expr,
+			return_type:        ^Expr,
+			has_side_effects:   bool,
+			is_align_stack:     bool,
+			dialect:            Inline_Asm_Dialect,
+			open:               tokenizer.Pos,
+			constraints_string: ^Expr,
+			asm_string:         ^Expr,
+			close:              tokenizer.Pos,
+		}
+		*/
+
+		/*
+			cpuid :: proc(ax, cx: u32) -> (eax, ebc, ecx, edx: u32) {
+				return expand_to_tuple(asm(u32, u32) -> struct{eax, ebc, ecx, edx: u32} {
+					"cpuid",
+					"={ax},={bx},={cx},={dx},{ax},{cx}",
+				}(ax, cx));
+			}
+		*/
+
+		print(p, v.tok, space, lparen);
+		print_exprs(p, v.param_types, ", ");
+		print(p, rparen, space);
+
+		print(p, "->", space);
+
+		print_expr(p, v.return_type);
+
+		print(p, space);
+
+		print(p, lbrace);
+		print_expr(p, v.asm_string);
+		print(p, ", ");
+		print_expr(p, v.constraints_string);
+		print(p, rbrace);
+
+	case Undef:
+		print(p, "---");
+	case Auto_Cast:
+		print(p, v.op, space);
+		print_expr(p, v.expr);
+	case Ternary_Expr:
+		print_expr(p, v.cond);
+		print(p, space, v.op1, space);
+		print_expr(p, v.x);
+		print(p, space, v.op2, space);
+		print_expr(p, v.y);
+	case Ternary_If_Expr:
+		print_expr(p, v.x);
+		print(p, space, v.op1, space);
+		print_expr(p, v.cond);
+		print(p, space, v.op2, space);
+		print_expr(p, v.y);
+	case Ternary_When_Expr:
+		print_expr(p, v.x);
+		print(p, space, v.op1, space);
+		print_expr(p, v.cond);
+		print(p, space, v.op2, space);
+		print_expr(p, v.y);
+	case Selector_Call_Expr:
+		print_expr(p, v.call.expr);
+		print(p, lparen);
+		print_exprs(p, v.call.args, ", ");
+		print(p, rparen);
 	case Ellipsis:
 		print(p, "..");
 		print_expr(p, v.expr);
@@ -599,7 +671,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 	case Call_Expr:
 		print_expr(p, v.expr);
 		print(p, lparen);
-		print_exprs(p, v.args, ", ");
+		print_call_exprs(p, v.args, ", ", v.ellipsis.kind == .Ellipsis);
 		print(p, rparen);
 	case Typeid_Type:
 		print(p, "typeid");
@@ -609,7 +681,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 		}
 	case Selector_Expr:
 		print_expr(p, v.expr);
-		print(p, dot);
+		print(p, v.op);
 		print_expr(p, v.field);
 	case Paren_Expr:
 		print(p, lparen);
@@ -725,7 +797,7 @@ print_proc_type :: proc (p: ^Printer, proc_type: ast.Proc_Type) {
 	}
 
 	print(p, lparen);
-	print_signature_list(p, proc_type.params, ", ");
+	print_signature_list(p, proc_type.params, ", ", false);
 	print(p, rparen);
 
 	if proc_type.results != nil {
@@ -821,6 +893,51 @@ print_enum_fields :: proc (p: ^Printer, list: []^ast.Expr, sep := " ") {
 	}
 }
 
+print_call_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", ellipsis := false) {
+
+	if len(list) == 0 {
+		return;
+	}
+
+	//all the expression are on the line
+	if list[0].pos.line == list[len(list) - 1].pos.line {
+
+		for expr, i in list {
+
+			if i == len(list) - 1 && ellipsis {
+				print(p, "..");
+			}
+
+			print_expr(p, expr);
+
+			if i != len(list) - 1 {
+				print(p, sep);
+			}
+		}
+	}
+
+	else
+
+	//we have to newline the expressions to respect the source
+	{
+		for expr, i in list {
+
+			newline_until_pos_limit(p, expr.pos, 1);
+
+			if i == len(list) - 1 && ellipsis {
+				print(p, "..");
+			}
+
+			print_expr(p, expr);
+
+			if i != len(list) - 1 {
+				print(p, sep);
+			}
+
+		}
+	}
+}
+
 print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", trailing := false) {
 
 	if len(list) == 0 {
@@ -840,7 +957,7 @@ print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", trailing := fal
 		}
 	}
 
-	else 
+	else
 
 	//we have to newline the expressions to respect the source
 	{
@@ -980,7 +1097,7 @@ print_field_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") {
 	}
 }
 
-print_signature_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") {
+print_signature_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "", remove_blank := true) {
 
 	if list.list == nil {
 		return;
@@ -999,7 +1116,7 @@ print_signature_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") {
 		for name in field.names {
 			if ident, ok := name.derived.(ast.Ident); ok {
 				//for some reason the parser uses _ to mean empty
-				if ident.name != "_" {
+				if ident.name != "_" || !remove_blank {
 					named = true;
 				}
 			}
@@ -1013,7 +1130,7 @@ print_signature_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") {
 		if named {
 			print_exprs(p, field.names, ", ");
 
-			if len(field.names) != 0 && field.default_value == nil {
+			if len(field.names) != 0 && field.type != nil {
 				print(p, ": ");
 			}
 
@@ -1022,7 +1139,13 @@ print_signature_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") {
 			}
 		}
 
-		if field.type != nil {
+		if field.type != nil && field.default_value != nil {
+			print_expr(p, field.type);
+			print(p, space, "=", space);
+			print_expr(p, field.default_value);
+		}
+
+		else if field.type != nil {
 			print_expr(p, field.type);
 		}
 
@@ -1272,7 +1395,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			print(p, semicolon);
 		}
 	case For_Stmt:
-
+		//this should be simplified
 		newline_until_pos(p, v.pos);
 
 		if v.label != nil {
@@ -1293,20 +1416,26 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			print(p, semicolon, space);
 		}
 
+		else if v.post != nil {
+			print(p, semicolon, space);
+		}
+
 		if v.cond != nil {
 			print_expr(p, v.cond);
 		}
 
-		if v.init != nil {
+		if v.post != nil {
+			print(p, semicolon);
+			print(p, space);
+			print_stmt(p, v.post);
+			print(p, space);
+		}
+
+		else if v.post == nil && v.cond != nil && v.init != nil {
 			print(p, semicolon);
 		}
 
-		if v.post != nil {
-			print(p, space);
-			print_stmt(p, v.post);
-		}
-
-		if v.init == nil && v.post == nil && v.cond != nil {
+		if (v.init == nil && v.post == nil && v.cond != nil) || (v.init == nil && v.post == nil && v.cond == nil) {
 			print(p, space);
 		}
 
@@ -1426,7 +1555,14 @@ print_decl :: proc (p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 	}
 
 	switch v in decl.derived {
+	case Expr_Stmt:
+		newline_until_pos(p, decl.pos);
+		print_expr(p, v.expr);
+		if p.config.semicolons {
+			print(p, semicolon);
+		}
 	case When_Stmt:
+		newline_until_pos(p, decl.pos);
 		print_stmt(p, cast(^Stmt)decl);
 	case Foreign_Import_Decl:
 		if len(v.attributes) > 0 {
@@ -1438,7 +1574,14 @@ print_decl :: proc (p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 		}
 
 		print_attributes(p, v.attributes);
-		print(p, v.foreign_tok, space, v.import_tok, space, v.name^, space);
+
+		if v.name != nil {
+			print(p, v.foreign_tok, space, v.import_tok, space, v.name^, space);
+		}
+
+		else {
+			print(p, v.foreign_tok, space, v.import_tok, space);
+		}
 
 		for path in v.fullpaths {
 			print(p, path);
@@ -1575,6 +1718,8 @@ print_attributes :: proc (p: ^Printer, attributes: [dynamic]^ast.Attribute) {
 print_file :: proc (p: ^Printer, file: ^ast.File) {
 
 	p.comments = file.comments;
+
+	newline_until_pos(p, file.pkg_token.pos);
 
 	print(p, file.pkg_token, space, file.pkg_name);
 

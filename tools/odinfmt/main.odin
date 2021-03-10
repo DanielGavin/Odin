@@ -4,6 +4,8 @@ import "core:os"
 import "core:odin/format"
 import "core:fmt"
 import "core:strings"
+import "core:path/filepath"
+
 import "flag"
 
 Args :: struct {
@@ -30,6 +32,23 @@ format_file :: proc(filepath: string) -> ([] u8, bool) {
 
 }
 
+files: [dynamic] string;
+
+walk_files :: proc(info: os.File_Info, in_err: os.Errno) -> (err: os.Errno, skip_dir: bool) {
+
+    if info.is_dir {
+        return 0, false;
+    }
+
+    if filepath.ext(info.name) != ".odin" {
+        return 0, false;
+    }
+
+    append(&files, strings.clone(info.fullpath));
+
+    return 0, false;
+}
+
 main :: proc() {
 
     args: Args;
@@ -52,10 +71,14 @@ main :: proc() {
 
             backup_path := strings.concatenate({path, "_bk"}, context.temp_allocator);
 
-            os.rename(path, backup_path);
+            if data, ok := format_file(path); ok {
 
-            if data, ok := format_file(backup_path); ok {
-                os.write_entire_file(path, data);
+                 os.rename(path, backup_path);
+
+                if os.write_entire_file(path, data) {
+                    os.remove(backup_path);
+                }
+
             }
 
             else {
@@ -76,14 +99,35 @@ main :: proc() {
 
     else if os.is_dir(path) {
 
-        if _, ok := args.write.(bool); ok {
+        filepath.walk(path, walk_files);
 
+        for file in files {
+
+            fmt.println(file);
+
+            backup_path := strings.concatenate({file, "_bk"}, context.temp_allocator);
+
+            if data, ok := format_file(file); ok {
+
+                if _, ok := args.write.(bool); ok {
+                    os.rename(file, backup_path);
+
+                    if os.write_entire_file(file, data) {
+                        os.remove(backup_path);
+                    }
+                }
+
+                else {
+                    fmt.println(transmute(string)data);
+                }
+
+
+            }
+
+            free_all(context.temp_allocator);
         }
 
-        else {
-            fmt.eprintf("Directory path option requires write flag to be set \n");
-            os.exit(1);
-        }
+        fmt.printf("formatted %v files", len(files));
 
     }
 

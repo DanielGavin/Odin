@@ -6,6 +6,10 @@ import "core:odin/ast"
 
 default_style := printer.default_style;
 
+simplify :: proc(file: ^ast.File) {
+
+}
+
 format :: proc(source: [] u8, config: printer.Config, allocator := context.allocator) -> ([] u8, bool) {
 
     pkg := ast.Package {
@@ -17,11 +21,11 @@ format :: proc(source: [] u8, config: printer.Config, allocator := context.alloc
         src = source,
     };
 
-    p: parser.Parser;
+    p := parser.default_parser();
 
     ok := parser.parse_file(&p, &file);
 
-    if !ok || file.syntax_error_count < 0  {
+    if !ok || file.syntax_error_count > 0  {
         return {}, false;
     }
 
