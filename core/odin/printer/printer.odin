@@ -36,7 +36,7 @@ default_style := Config {
 	spaces = 4,
 	newline_limit = 2,
 	convert_do = false,
-	semicolons = true,
+	semicolons = false,
 	tabs = true,
 	brace_style = ._1TBS,
 	split_multiple_stmts = true,
@@ -874,7 +874,7 @@ print_call_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", ellipsis :
 				print(p, sep);
 			}
 		}
-	} else 
+	} else
 
 	//we have to newline the expressions to respect the source
 	{
@@ -912,7 +912,7 @@ print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", trailing := fal
 				print(p, sep);
 			}
 		}
-	} else 
+	} else
 
 	//we have to newline the expressions to respect the source
 	{
@@ -1120,7 +1120,10 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 		newline_until_pos(p, v.pos);
 		print(p, "using", space);
 		print_exprs(p, v.list, ", ");
-		print(p, semicolon);
+
+		if p.config.semicolons {
+			print(p, semicolon);
+		}
 	case Block_Stmt:
 		newline_until_pos(p, v.pos);
 
@@ -1325,7 +1328,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 	case Expr_Stmt:
 		newline_until_pos(p, v.pos);
 		print_expr(p, v.expr);
-		if block_stmt {
+		if block_stmt && p.config.semicolons {
 			print(p, semicolon);
 		}
 	case For_Stmt:
@@ -1436,7 +1439,10 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 		newline_until_pos(p, v.pos);
 		print(p, "defer", space);
 		print_stmt(p, v.stmt);
-		print(p, semicolon);
+
+		if p.config.semicolons {
+ 			print(p, semicolon);
+		}
 	case When_Stmt:
 		newline_until_pos(p, v.pos);
 		print(p, "when", space);
@@ -1447,7 +1453,13 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 
 		if v.else_stmt != nil {
 
-			print(p, newline, newline, "else");
+			if p.config.newline_else {
+				print(p, newline);
+			} else {
+				print(p, space);
+			}
+
+			print(p, "else");
 			print(p, space);
 
 			print_stmt(p, v.else_stmt);
