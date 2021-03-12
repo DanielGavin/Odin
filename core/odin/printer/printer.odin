@@ -681,6 +681,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 		if len(v.elems) != 0 && v.pos.line != v.elems[len(v.elems) - 1].pos.line {
 			print_begin_brace(p, v.pos);
 			print(p, newline);
+			set_source_position(p, v.elems[len(v.elems) - 1].pos);
 			print_exprs(p, v.elems, ",", true);
 			print_end_brace(p, v.end);
 		} else {
