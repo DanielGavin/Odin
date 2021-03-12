@@ -539,16 +539,18 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print(p, space, "#maybe");
 		}
 
-		set_source_position(p, v.variants[len(v.variants) - 1].pos);
+
 
 		if v.variants != nil && (len(v.variants) == 0 || v.pos.line == v.end.line) {
 			print(p, space, lbrace);
+			set_source_position(p, v.variants[len(v.variants) - 1].pos);
 			print_exprs(p, v.variants, ", ");
 			print(p, rbrace);
 		} else {
 			print(p, space);
-			print_begin_brace(p);
+			print_begin_brace(p, v.pos);
 			print(p, newline);
+			set_source_position(p, v.variants[len(v.variants) - 1].pos);
 			print_exprs(p, v.variants, ",", true);
 			print_end_brace(p, v.end);
 		}
@@ -560,16 +562,16 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print_expr(p, v.base_type);
 		}
 
-		set_source_position(p, v.fields[len(v.fields) - 1].pos);
-
 		if v.fields != nil && (len(v.fields) == 0 || v.pos.line == v.end.line) {
 			print(p, space, lbrace);
+			set_source_position(p, v.fields[len(v.fields) - 1].pos);
 			print_exprs(p, v.fields, ", ");
 			print(p, rbrace);
 		} else {
 			print(p, space);
-			print_begin_brace(p);
+			print_begin_brace(p, v.pos);
 			print(p, newline);
+			set_source_position(p, v.fields[len(v.fields) - 1].pos);
 			print_enum_fields(p, v.fields, ",");
 			print_end_brace(p, v.end);
 		}
@@ -597,16 +599,16 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print(p, rparen);
 		}
 
-		set_source_position(p, v.fields.pos);
-
 		if v.fields != nil && (len(v.fields.list) == 0 || v.pos.line == v.end.line) {
 			print(p, space, lbrace);
+			set_source_position(p, v.fields.pos);
 			print_field_list(p, v.fields, ", ");
 			print(p, rbrace);
 		} else {
 			print(p, space);
-			print_begin_brace(p);
+			print_begin_brace(p, v.pos);
 			print(p, newline);
+			set_source_position(p, v.fields.pos);
 			print_struct_field_list(p, v.fields, ",");
 			print_end_brace(p, v.end);
 		}
@@ -676,12 +678,8 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print(p, space);
 		}
 
-		if len(v.elems) != 0 {
-			set_source_position(p, v.elems[0].pos);
-		}
-
 		if len(v.elems) != 0 && v.pos.line != v.elems[len(v.elems) - 1].pos.line {
-			print_begin_brace(p);
+			print_begin_brace(p, v.pos);
 			print(p, newline);
 			print_exprs(p, v.elems, ",", true);
 			print_end_brace(p, v.end);
@@ -1126,7 +1124,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 		if v.pos.line == v.end.line && len(v.stmts) > 1 && p.config.split_multiple_stmts {
 
 			if !empty_block {
-				print_begin_brace(p);
+				print_begin_brace(p, v.pos);
 			}
 
 			set_source_position(p, v.pos);
@@ -1154,7 +1152,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			}
 		} else {
 			if !empty_block {
-				print_begin_brace(p);
+				print_begin_brace(p, v.pos);
 			}
 
 			set_source_position(p, v.pos);
@@ -1655,7 +1653,9 @@ print_file :: proc (p: ^Printer, file: ^ast.File) {
 	write_whitespaces(p, p.current_whitespace);
 }
 
-print_begin_brace :: proc (p: ^Printer) {
+print_begin_brace :: proc (p: ^Printer, begin: tokenizer.Pos) {
+
+	set_source_position(p, begin);
 
 	if p.config.brace_style == .Allman {
 
