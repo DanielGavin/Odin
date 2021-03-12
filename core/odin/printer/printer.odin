@@ -550,7 +550,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print_begin_brace(p);
 			print(p, newline);
 			print_exprs(p, v.variants, ",", true);
-			print_end_brace(p);
+			print_end_brace(p, v.end);
 		}
 	case Enum_Type:
 		print(p, "enum");
@@ -571,7 +571,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print_begin_brace(p);
 			print(p, newline);
 			print_enum_fields(p, v.fields, ",");
-			print_end_brace(p);
+			print_end_brace(p, v.end);
 		}
 
 		set_source_position(p, v.end);
@@ -608,8 +608,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print_begin_brace(p);
 			print(p, newline);
 			print_struct_field_list(p, v.fields, ",");
-			set_source_position(p, v.end); //should really be the source position of the brace(no token)
-			print_end_brace(p);
+			print_end_brace(p, v.end);
 		}
 
 		set_source_position(p, v.end);
@@ -685,7 +684,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print_begin_brace(p);
 			print(p, newline);
 			print_exprs(p, v.elems, ",", true);
-			print_end_brace(p);
+			print_end_brace(p, v.end);
 		} else {
 			print(p, lbrace);
 			print_exprs(p, v.elems, ", ");
@@ -912,11 +911,8 @@ print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", trailing := fal
 				print(p, sep);
 			}
 		}
-	} else
-
-	//we have to newline the expressions to respect the source
-	{
-
+	} else {
+		//we have to newline the expressions to respect the source
 		for expr, i in list {
 
 			newline_until_pos_limit(p, expr.pos, 1);
@@ -1140,7 +1136,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			set_source_position(p, v.end);
 
 			if !empty_block {
-				print_end_brace(p);
+				print_end_brace(p, v.end);
 			}
 		} else if v.pos.line == v.end.line {
 			if !empty_block {
@@ -1168,7 +1164,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			set_source_position(p, v.end);
 
 			if !empty_block {
-				print_end_brace(p);
+				print_end_brace(p, v.end);
 			}
 		}
 	case If_Stmt:
@@ -1441,7 +1437,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 		print_stmt(p, v.stmt);
 
 		if p.config.semicolons {
- 			print(p, semicolon);
+			print(p, semicolon);
 		}
 	case When_Stmt:
 		newline_until_pos(p, v.pos);
@@ -1672,7 +1668,8 @@ print_begin_brace :: proc (p: ^Printer) {
 	}
 }
 
-print_end_brace :: proc (p: ^Printer) {
+print_end_brace :: proc (p: ^Printer, end: tokenizer.Pos) {
+	set_source_position(p, end);
 	print(p, unindent);
 	print(p, newline, rbrace);
 }
