@@ -1649,6 +1649,10 @@ print_file :: proc (p: ^Printer, file: ^ast.File) {
 
 		print_decl(p, cast(^ast.Decl)decl);
 	}
+
+	//todo(probably check if there already is a newline, but there really shouldn't be)
+	print(p, newline); //finish document with newline
+	write_whitespaces(p, p.current_whitespace);
 }
 
 print_begin_brace :: proc (p: ^Printer) {
