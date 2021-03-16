@@ -30,7 +30,6 @@ Config :: struct {
 	align_style:          Alignment_Style,
 	indent_cases:         bool,
 	newline_else:         bool,
-	strip_parentheses:    bool, //if (a) -> if a
 }
 
 default_style := Config {
@@ -45,7 +44,6 @@ default_style := Config {
 	align_style = .Align_On_Type_And_Equals,
 	indent_cases = false,
 	newline_else = false,
-	strip_parentheses = true,
 };
 
 Printer :: struct {
@@ -1194,7 +1192,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			print(p, semicolon, space);
 		}
 
-		print_stripped_parentheses(p, v.cond);
+		print_expr(p, v.cond);
 
 		uses_do := false;
 
@@ -1712,20 +1710,6 @@ print_block_stmts :: proc (p: ^Printer, stmts: []^ast.Stmt, newline_each := fals
 print_space_padding :: proc (p: ^Printer, n: int) {
 	for i := 0; i < n; i += 1 {
 		print(p, space);
-	}
-}
-
-print_stripped_parentheses :: proc (p: ^Printer, expr: ^ast.Expr) {
-	if expr == nil {
-		return;
-	} else if !p.config.strip_parentheses {
-		print_expr(p, expr);
-	}
-
-	if para_expr, ok := expr.derived.(ast.Paren_Expr); ok {
-		print_expr(p, para_expr.expr);
-	} else {
-		print_expr(p, expr);
 	}
 }
 
