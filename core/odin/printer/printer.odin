@@ -30,6 +30,7 @@ Config :: struct {
 	align_style:          Alignment_Style,
 	indent_cases:         bool,
 	newline_else:         bool,
+	strip_parentheses:    bool, //if (a) -> if a
 }
 
 default_style := Config {
@@ -44,6 +45,7 @@ default_style := Config {
 	align_style = .Align_On_Type_And_Equals,
 	indent_cases = false,
 	newline_else = false,
+	strip_parentheses = true,
 };
 
 Printer :: struct {
@@ -119,10 +121,10 @@ print :: proc (p: ^Printer, args: ..any) {
 		case string:
 			data = a;
 		case tokenizer.Token:
-			tok = a;
+			tok  = a;
 			data = a.text;
 		case byte:
-			b = a;
+			b    = a;
 			data = strings.string_from_ptr(&b, 1);
 		case Whitespace:
 
@@ -539,8 +541,6 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print(p, space, "#maybe");
 		}
 
-
-
 		if v.variants != nil && (len(v.variants) == 0 || v.pos.line == v.end.line) {
 			print(p, space, lbrace);
 			set_source_position(p, v.variants[len(v.variants) - 1].pos);
@@ -668,9 +668,20 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 		print_expr(p, v.index);
 		print(p, rbracket);
 	case Proc_Group:
-		print(p, v.tok, space, lbrace);
-		print_exprs(p, v.args, ", ");
-		print(p, rbrace);
+
+		print(p, "proc", space);
+
+		if len(v.args) != 0 && v.pos.line != v.args[len(v.args) - 1].pos.line {
+			print_begin_brace(p, v.pos);
+			print(p, newline);
+			set_source_position(p, v.args[len(v.args) - 1].pos);
+			print_exprs(p, v.args, ",", true);
+			print_end_brace(p, v.end);
+		} else {
+			print(p, v.tok, space, lbrace);
+			print_exprs(p, v.args, ", ");
+			print(p, rbrace);
+		}
 	case Comp_Lit:
 
 		if v.type != nil {
@@ -1183,7 +1194,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			print(p, semicolon, space);
 		}
 
-		print_expr(p, v.cond);
+		print_stripped_parentheses(p, v.cond);
 
 		uses_do := false;
 
@@ -1213,6 +1224,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			}
 
 			print(p, "else");
+
 			print(p, space);
 
 			set_source_position(p, v.else_stmt.pos);
@@ -1259,9 +1271,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 
 		print(p, v.terminator);
 
-		for stmt in v.body {
-			print_stmt(p, stmt, false, true);
-		}
+		print_block_stmts(p, v.body);
 
 		print(p, unindent);
 
@@ -1455,7 +1465,10 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 			}
 
 			print(p, "else");
-			print(p, space);
+
+			if if_stmt, ok := v.else_stmt.derived.(If_Stmt); ok {
+				print(p, space);
+			}
 
 			print_stmt(p, v.else_stmt);
 		}
@@ -1697,9 +1710,22 @@ print_block_stmts :: proc (p: ^Printer, stmts: []^ast.Stmt, newline_each := fals
 }
 
 print_space_padding :: proc (p: ^Printer, n: int) {
-
 	for i := 0; i < n; i += 1 {
 		print(p, space);
+	}
+}
+
+print_stripped_parentheses :: proc (p: ^Printer, expr: ^ast.Expr) {
+	if expr == nil {
+		return;
+	} else if !p.config.strip_parentheses {
+		print_expr(p, expr);
+	}
+
+	if para_expr, ok := expr.derived.(ast.Paren_Expr); ok {
+		print_expr(p, para_expr.expr);
+	} else {
+		print_expr(p, expr);
 	}
 }
 
