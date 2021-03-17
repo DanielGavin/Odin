@@ -156,7 +156,7 @@ newline_until_pos :: proc (p: ^Printer, pos: tokenizer.Pos) {
 	newline_until_pos_limit(p, pos, p.config.newline_limit);
 }
 
-newline_until_pos_limit :: proc (p: ^Printer, pos: tokenizer.Pos, limit: int) {
+newline_until_pos_limit :: proc (p: ^Printer, pos: tokenizer.Pos, limit: int) -> bool {
 
 	lines := min(pos.line - p.source_position.line, limit);
 
@@ -166,6 +166,8 @@ newline_until_pos_limit :: proc (p: ^Printer, pos: tokenizer.Pos, limit: int) {
 
 	//all whitespaces are buffered and we therefore set the expected source_position
 	p.source_position = pos;
+
+	return lines > 0;
 }
 
 comment_before_position :: proc (p: ^Printer, pos: tokenizer.Pos) -> bool {
@@ -362,7 +364,7 @@ write_string :: proc (p: ^Printer, pos: tokenizer.Pos, str: string) {
 
 write_byte :: proc (p: ^Printer, b: byte) {
 
-	if p.out_position.column == 1 && b != '\t' && b != ' ' && b != '\n' {
+	if p.out_position.column == 1 && b != '\t' && b != '\n' {
 		write_indent(p);
 	}
 
@@ -644,7 +646,10 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 	case Call_Expr:
 		print_expr(p, v.expr);
 		print(p, lparen);
-		print_call_exprs(p, v.args, ", ", v.ellipsis.kind == .Ellipsis);
+
+		padding := get_length_of_names({v.expr});
+
+		print_call_exprs(p, v.args, ", ", v.ellipsis.kind == .Ellipsis, padding);
 		print(p, rparen);
 	case Typeid_Type:
 		print(p, "typeid");
@@ -667,7 +672,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 		print(p, rbracket);
 	case Proc_Group:
 
-		print(p, "proc", space);
+		print(p, v.tok);
 
 		if len(v.args) != 0 && v.pos.line != v.args[len(v.args) - 1].pos.line {
 			print_begin_brace(p, v.pos);
@@ -676,7 +681,7 @@ print_expr :: proc (p: ^Printer, expr: ^ast.Expr) {
 			print_exprs(p, v.args, ",", true);
 			print_end_brace(p, v.end);
 		} else {
-			print(p, v.tok, space, lbrace);
+			print(p, space, lbrace);
 			print_exprs(p, v.args, ", ");
 			print(p, rbrace);
 		}
@@ -860,7 +865,7 @@ print_enum_fields :: proc (p: ^Printer, list: []^ast.Expr, sep := " ") {
 	}
 }
 
-print_call_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", ellipsis := false) {
+print_call_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", ellipsis := false, padding := 0) {
 
 	if len(list) == 0 {
 		return;
@@ -881,13 +886,14 @@ print_call_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", ellipsis :
 				print(p, sep);
 			}
 		}
-	} else
+	} else {
 
-	//we have to newline the expressions to respect the source
-	{
 		for expr, i in list {
 
-			newline_until_pos_limit(p, expr.pos, 1);
+			//we have to newline the expressions to respect the source
+			if newline_until_pos_limit(p, expr.pos, 1) {
+				print_space_padding(p, padding);
+			}
 
 			if i == len(list) - 1 && ellipsis {
 				print(p, "..");
@@ -908,30 +914,17 @@ print_exprs :: proc (p: ^Printer, list: []^ast.Expr, sep := " ", trailing := fal
 		return;
 	}
 
-	//all the expression are on the line
-	if list[0].pos.line == list[len(list) - 1].pos.line {
+	//we have to newline the expressions to respect the source
+	for expr, i in list {
 
-		for expr, i in list {
+		newline_until_pos_limit(p, expr.pos, 1);
 
-			print_expr(p, expr);
+		print_expr(p, expr);
 
-			if i != len(list) - 1 {
-				print(p, sep);
-			}
-		}
-	} else {
-		//we have to newline the expressions to respect the source
-		for expr, i in list {
-
-			newline_until_pos_limit(p, expr.pos, 1);
-
-			print_expr(p, expr);
-
-			if i != len(list) - 1 {
-				print(p, sep);
-			} else if trailing {
-				print(p, strings.trim_space(sep));
-			}
+		if i != len(list) - 1 {
+			print(p, sep);
+		} else if trailing {
+			print(p, strings.trim_space(sep));
 		}
 	}
 }
@@ -968,9 +961,16 @@ print_struct_field_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") 
 	}
 
 	largest := 0;
+	using_size := len("using ");
+
+	//NOTE(Daniel): Is there any other variables than using in structs?
 
 	for field, i in list.list {
-		largest = max(largest, get_length_of_names(field.names));
+		if .Using in field.flags {
+			largest = max(largest, get_length_of_names(field.names) + using_size);
+		} else {
+			largest = max(largest, get_length_of_names(field.names));
+		}
 	}
 
 	for field, i in list.list {
@@ -991,7 +991,13 @@ print_struct_field_list :: proc (p: ^Printer, list: ^ast.Field_List, sep := "") 
 			panic("struct field has to have types");
 		}
 
-		print_space_padding(p, largest - get_length_of_names(field.names));
+		if .Using in field.flags {
+			print_space_padding(p, largest - get_length_of_names(field.names) - using_size);
+		}
+
+		else {
+			print_space_padding(p, largest - get_length_of_names(field.names));
+		}
 
 		print_expr(p, field.type);
 
@@ -1316,14 +1322,7 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 
 		print(p, space, v.op, space);
 
-		if block_stmt {
-			//experimenting with indenting the newlines in assigments
-			print(p, indent);
-			print_exprs(p, v.rhs, ", ");
-			print(p, unindent);
-		} else {
-			print_exprs(p, v.rhs, ", ");
-		}
+		print_exprs(p, v.rhs, ", ");
 
 		if block_stmt && p.config.semicolons {
 			print(p, semicolon);
@@ -1464,9 +1463,9 @@ print_stmt :: proc (p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_st
 
 			print(p, "else");
 
-			if if_stmt, ok := v.else_stmt.derived.(If_Stmt); ok {
-				print(p, space);
-			}
+			print(p, space);
+
+			set_source_position(p, v.else_stmt.pos);
 
 			print_stmt(p, v.else_stmt);
 		}
@@ -1508,7 +1507,6 @@ print_decl :: proc (p: ^Printer, decl: ^ast.Decl, called_in_stmt := false) {
 			print(p, semicolon);
 		}
 	case When_Stmt:
-		newline_until_pos(p, decl.pos);
 		print_stmt(p, cast(^Stmt)decl);
 	case Foreign_Import_Decl:
 		if len(v.attributes) > 0 {
