@@ -190,11 +190,13 @@ struct BuildContext {
 	bool   no_entry_point;
 	bool   use_lld;
 	bool   vet;
+	bool   vet_extra;
 	bool   cross_compiling;
 	bool   different_os;
 	bool   keep_object_files;
 	bool   disallow_do;
 	bool   insert_semicolon;
+	bool   strict_style;
 
 	bool   ignore_warnings;
 	bool   warnings_as_errors;
@@ -363,8 +365,8 @@ bool is_excluded_target_filename(String name) {
 		return true;
 	}
 
-	String test_suffix = str_lit("_test");
 	if (build_context.command_kind != Command_test) {
+		String test_suffix = str_lit("_test");
 		if (string_ends_with(name, test_suffix) && name != test_suffix) {
 			// Ignore *_test.odin files
 			return true;
@@ -871,7 +873,7 @@ void init_build_context(TargetMetrics *cross_target) {
 		//   -memcpyopt: MemCpy optimization
 	}
 	if (bc->ODIN_DEBUG == false) {
-		opt_flags = gb_string_appendc(opt_flags, "-mem2reg -memcpyopt -die ");
+		opt_flags = gb_string_appendc(opt_flags, "-mem2reg -die ");
 	}
 
 

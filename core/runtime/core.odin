@@ -246,7 +246,7 @@ args__: []cstring;
 
 Source_Code_Location :: struct {
 	file_path:    string,
-	line, column: int,
+	line, column: i32,
 	procedure:    string,
 }
 
@@ -496,4 +496,5 @@ default_assertion_failure_proc :: proc(prefix, message: string, loc: Source_Code
 	}
 	print_byte('\n');
 	debug_trap();
+	// trap();
 }

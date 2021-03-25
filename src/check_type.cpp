@@ -152,10 +152,12 @@ void check_struct_fields(CheckerContext *ctx, Ast *node, Array<Entity *> *fields
 
 		for_array(j, p->names) {
 			Ast *name = p->names[j];
-			if (!ast_node_expect(name, Ast_Ident)) {
+			if (!ast_node_expect2(name, Ast_Ident, Ast_PolyType)) {
 				continue;
 			}
-
+			if (name->kind == Ast_PolyType) {
+				name = name->PolyType.type;
+			}
 			Token name_token = name->Ident.token;
 
 			Entity *field = alloc_entity_field(ctx->scope, name_token, type, is_using, field_src_index);
@@ -464,8 +466,11 @@ void check_struct_type(CheckerContext *ctx, Type *struct_type, Ast *node, Array<
 				Scope *scope = ctx->scope;
 				for_array(j, p->names) {
 					Ast *name = p->names[j];
-					if (!ast_node_expect(name, Ast_Ident)) {
+					if (!ast_node_expect2(name, Ast_Ident, Ast_PolyType)) {
 						continue;
+					}
+					if (name->kind == Ast_PolyType) {
+						name = name->PolyType.type;
 					}
 					Entity *e = nullptr;
 
@@ -680,8 +685,11 @@ void check_union_type(CheckerContext *ctx, Type *union_type, Ast *node, Array<Op
 				Scope *scope = ctx->scope;
 				for_array(j, p->names) {
 					Ast *name = p->names[j];
-					if (!ast_node_expect(name, Ast_Ident)) {
+					if (!ast_node_expect2(name, Ast_Ident, Ast_PolyType)) {
 						continue;
+					}
+					if (name->kind == Ast_PolyType) {
+						name = name->PolyType.type;
 					}
 					Entity *e = nullptr;
 
@@ -976,6 +984,7 @@ bool is_type_valid_bit_set_range(Type *t) {
 void check_bit_set_type(CheckerContext *c, Type *type, Type *named_type, Ast *node) {
 	ast_node(bs, BitSetType, node);
 	GB_ASSERT(type->kind == Type_BitSet);
+	type->BitSet.node = node;
 
 	i64 const DEFAULT_BITS = cast(i64)(8*build_context.word_size);
 	i64 const MAX_BITS = 128;
@@ -1674,6 +1683,25 @@ Type *check_get_params(CheckerContext *ctx, Scope *scope, Ast *_params, bool *is
 							}
 						}
 					}
+					if (type != t_invalid && !check_is_assignable_to(ctx, &op, type)) {
+						bool ok = true;
+						if (p->flags&FieldFlag_auto_cast) {
+							if (!check_is_castable_to(ctx, &op, type)) {
+								ok = false;
+							}
+						}
+						if (!ok) {
+							success = false;
+							#if 0
+								gbString got = type_to_string(op.type);
+								gbString expected = type_to_string(type);
+								error(op.expr, "Cannot assigned type to parameter, got type '%s', expected '%s'", got, expected);
+								gb_string_free(expected);
+								gb_string_free(got);
+							#endif
+						}
+					}
+
 					if (is_type_untyped(default_type(type))) {
 						gbString str = type_to_string(type);
 						error(op.expr, "Cannot determine type from the parameter, got '%s'", str);
@@ -2369,6 +2397,16 @@ Type *type_to_abi_compat_result_type(gbAllocator a, Type *original_type, ProcCal
 		new_type = tuple;
 	}
 
+	if (cc == ProcCC_None) {
+		for_array(i, new_type->Tuple.variables) {
+			Type **tp = &new_type->Tuple.variables[i]->type;
+			Type *t = core_type(*tp);
+			if (t == t_bool) {
+				*tp = t_llvm_bool;
+			}
+		}
+	}
+
 	new_type->cached_size = -1;
 	new_type->cached_align = -1;
 	return new_type;
@@ -2394,7 +2432,7 @@ bool abi_compat_return_by_pointer(gbAllocator a, ProcCallingConvention cc, Type 
 		}
 	}
 
-	if (build_context.ODIN_OS == "windows") {
+	if (build_context.ODIN_OS == "windows" || build_context.ODIN_OS == "linux" ) {
 		i64 size = 8*type_size_of(abi_return_type);
 		switch (size) {
 		case 0:

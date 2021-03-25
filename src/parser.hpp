@@ -42,6 +42,7 @@ enum ParseFileError {
 	ParseFile_NotFound,
 	ParseFile_InvalidToken,
 	ParseFile_GeneralError,
+	ParseFile_FileTooLarge,
 
 	ParseFile_Count,
 };
@@ -74,7 +75,7 @@ struct ImportedFile {
 };
 
 struct AstFile {
-	isize        id;
+	i32          id;
 	AstPackage * pkg;
 	Scope *      scope;
 
@@ -406,8 +407,7 @@ AST_KIND(_ComplexStmtBegin, "", bool) \
 	AST_KIND(RangeStmt, "range statement", struct { \
 		Token token; \
 		Ast *label; \
-		Ast *val0; \
-		Ast *val1; \
+		Slice<Ast *> vals; \
 		Token in_token; \
 		Ast *expr; \
 		Ast *body; \

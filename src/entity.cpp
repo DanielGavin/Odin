@@ -57,10 +57,14 @@ enum EntityFlag : u32 {
 
 	EntityFlag_SoaPtrField   = 1<<19, // to allow s.x[0] where `s.x` is a pointer rather than a slice
 
+	EntityFlag_ProcBodyChecked = 1<<20,
+
 	EntityFlag_CVarArg       = 1<<21,
 	EntityFlag_AutoCast      = 1<<22,
 
 	EntityFlag_Disabled      = 1<<24,
+
+	EntityFlag_Test          = 1<<25,
 
 };
 

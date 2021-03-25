@@ -339,8 +339,7 @@ void ir_print_proc_type_without_pointer(irFileBuffer *f, irModule *m, Type *t) {
 		// ir_fprintf(f, "* sret noalias ");
 		// ir_write_string(f, str_lit("* noalias "));
 		ir_write_string(f, str_lit("*"));
-		if (build_context.ODIN_OS == "darwin" ||
-		    build_context.ODIN_OS == "linux") {
+		if (build_context.ODIN_OS == "darwin") {
 			ir_fprintf(f, " byval");
 		}
 		if (param_count > 0 || t->Proc.calling_convention == ProcCC_Odin)  {
@@ -1426,9 +1425,9 @@ void ir_print_value(irFileBuffer *f, irModule *m, irValue *value, Type *type_hin
 		ir_write_byte(f, '{');
 		ir_print_type(f, m, t_string); ir_write_byte(f, ' '); ir_print_value(f, m, file, t_string);
 		ir_write_string(f, str_lit(", "));
-		ir_print_type(f, m, t_int);    ir_write_byte(f, ' '); ir_print_value(f, m, line, t_int);
+		ir_print_type(f, m, t_i32);    ir_write_byte(f, ' '); ir_print_value(f, m, line, t_i32);
 		ir_write_string(f, str_lit(", "));
-		ir_print_type(f, m, t_int);    ir_write_byte(f, ' '); ir_print_value(f, m, column, t_int);
+		ir_print_type(f, m, t_i32);    ir_write_byte(f, ' '); ir_print_value(f, m, column, t_i32);
 		ir_write_string(f, str_lit(", "));
 		ir_print_type(f, m, t_string); ir_write_byte(f, ' '); ir_print_value(f, m, procedure, t_string);
 		ir_write_byte(f, '}');
@@ -1534,6 +1533,9 @@ void ir_print_instr(irFileBuffer *f, irModule *m, irValue *value) {
 	case irInstr_Load: {
 		Type *type = instr->Load.type;
 		ir_fprintf(f, "%%%d = load ", value->index);
+		if (instr->Load.is_volatile) {
+			ir_write_str_lit(f, "volatile ");
+		}
 		ir_print_type(f, m, type);
 		ir_write_str_lit(f, ", ");
 		ir_print_type(f, m, type);
@@ -2453,8 +2455,7 @@ void ir_print_proc(irFileBuffer *f, irModule *m, irProcedure *proc) {
 	if (proc_type->return_by_pointer) {
 		ir_print_type(f, m, reduce_tuple_to_single_type(proc_type->results));
 		ir_write_str_lit(f, "* sret noalias ");
-		if (build_context.ODIN_OS == "darwin" ||
-		    build_context.ODIN_OS == "linux") {
+		if (build_context.ODIN_OS == "darwin") {
 			ir_fprintf(f, "byval ");
 		}
 		ir_write_str_lit(f, "%agg.result");
@@ -2885,8 +2886,8 @@ void print_llvm_ir(irGen *ir) {
 				            ", linkageName: \"%.*s\""
 				            ", scope: !%d"
 				            ", file: !%d"
-				            ", line: %td"
-				            ", scopeLine: %td"
+				            ", line: %d"
+				            ", scopeLine: %d"
 				            ", isDefinition: true"
 				            ", isLocal: false" // TODO(lachsinc): Is this fine?
 				            ", flags: DIFlagPrototyped"
@@ -2910,8 +2911,8 @@ void print_llvm_ir(irGen *ir) {
 			case irDebugInfo_Location:
 				GB_ASSERT_NOT_NULL(di->Location.scope);
 				ir_fprintf(f, "!DILocation("
-				              "line: %td"
-				            ", column: %td"
+				              "line: %d"
+				            ", column: %d"
 				            ", scope: !%d)",
 				            di->Location.pos.line,
 				            di->Location.pos.column,
@@ -2921,8 +2922,8 @@ void print_llvm_ir(irGen *ir) {
 				GB_ASSERT_NOT_NULL(di->LexicalBlock.file);
 				GB_ASSERT_NOT_NULL(di->LexicalBlock.scope);
 				ir_fprintf(f, "distinct !DILexicalBlock("
-				              "line: %td"
-				            ", column: %td"
+				              "line: %d"
+				            ", column: %d"
 				            ", file: !%d"
 				            ", scope: !%d)",
 				            di->LexicalBlock.pos.line,
@@ -3039,7 +3040,7 @@ void print_llvm_ir(irGen *ir) {
 				}
 				if (di->CompositeType.file != nullptr) {
 					ir_fprintf(f, ", file: !%d"
-					              ", line: %td",
+					              ", line: %d",
 					              di->CompositeType.file->id,
 					              di->CompositeType.pos.line);
 				}

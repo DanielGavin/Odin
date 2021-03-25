@@ -276,6 +276,7 @@ struct TypeProc {
 		Type *underlying;                                 \
 		i64   lower;                                      \
 		i64   upper;                                      \
+		Ast * node;                                       \
 	})                                                    \
 	TYPE_KIND(SimdVector, struct {                        \
 		i64   count;                                      \
@@ -1863,6 +1864,9 @@ bool is_type_comparable(Type *t) {
 
 	case Type_Struct:
 		if (type_size_of(t) == 0) {
+			return false;
+		}
+		if (t->Struct.soa_kind != StructSoa_None) {
 			return false;
 		}
 		if (t->Struct.is_raw_union) {
@@ -3620,6 +3624,9 @@ gbString write_type_to_string(gbString str, Type *type) {
 }
 
 
+gbString type_to_string(Type *type, gbAllocator allocator) {
+	return write_type_to_string(gb_string_make(allocator, ""), type);
+}
 gbString type_to_string(Type *type) {
 	return write_type_to_string(gb_string_make(heap_allocator(), ""), type);
 }

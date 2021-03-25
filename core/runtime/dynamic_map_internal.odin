@@ -138,16 +138,6 @@ default_hasher_cstring :: proc "contextless" (data: rawptr, seed: uintptr) -> ui
 }
 
 
-
-source_code_location_hash :: proc(s: Source_Code_Location) -> uintptr {
-	hash := _fnv64a(transmute([]byte)s.file_path);
-	hash = hash ~ (u64(s.line) * 0x100000001b3);
-	hash = hash ~ (u64(s.column) * 0x100000001b3);
-	return uintptr(hash);
-}
-
-
-
 __get_map_header :: proc "contextless" (m: ^$T/map[$K]$V) -> Map_Header {
 	header := Map_Header{m = (^Raw_Map)(m)};
 	Entry :: struct {
@@ -159,14 +149,14 @@ __get_map_header :: proc "contextless" (m: ^$T/map[$K]$V) -> Map_Header {
 
 	header.equal = intrinsics.type_equal_proc(K);
 
-	header.entry_size    = int(size_of(Entry));
-	header.entry_align   = int(align_of(Entry));
+	header.entry_size    = size_of(Entry);
+	header.entry_align   = align_of(Entry);
 
-	header.key_offset    = uintptr(offset_of(Entry, key));
-	header.key_size      = int(size_of(K));
+	header.key_offset    = offset_of(Entry, key);
+	header.key_size      = size_of(K);
 
-	header.value_offset  = uintptr(offset_of(Entry, value));
-	header.value_size    = int(size_of(V));
+	header.value_offset  = offset_of(Entry, value);
+	header.value_size    = size_of(V);
 
 	return header;
 }
@@ -284,16 +274,15 @@ __dynamic_map_set :: proc(h: Map_Header, hash: Map_Hash, value: rawptr, loc := #
 			h.m.hashes[fr.hash_index] = index;
 		}
 	}
-	{
-		e := __dynamic_map_get_entry(h, index);
-		e.hash = hash.hash;
 
-		key := rawptr(uintptr(e) + h.key_offset);
-		mem_copy(key, hash.key_ptr, h.key_size);
+	e := __dynamic_map_get_entry(h, index);
+	e.hash = hash.hash;
 
-		val := rawptr(uintptr(e) + h.value_offset);
-		mem_copy(val, value, h.value_size);
-	}
+	key := rawptr(uintptr(e) + h.key_offset);
+	mem_copy(key, hash.key_ptr, h.key_size);
+
+	val := rawptr(uintptr(e) + h.value_offset);
+	mem_copy(val, value, h.value_size);
 
 	if __dynamic_map_full(h) {
 		__dynamic_map_grow(h, loc);

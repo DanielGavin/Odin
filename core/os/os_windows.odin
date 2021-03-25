@@ -79,7 +79,7 @@ last_write_time_by_name :: proc(name: string) -> (File_Time, Errno) {
 	data: win32.WIN32_FILE_ATTRIBUTE_DATA;
 
 	wide_path := win32.utf8_to_wstring(name);
-	if !win32.GetFileAttributesExW(auto_cast wide_path, win32.GetFileExInfoStandard, &data) {
+	if !win32.GetFileAttributesExW(wide_path, win32.GetFileExInfoStandard, &data) {
 		return 0, Errno(win32.GetLastError());
 	}
 
@@ -127,7 +127,7 @@ get_page_size :: proc() -> int {
 
 
 
-exit :: proc(code: int) -> ! {
+exit :: proc "contextless" (code: int) -> ! {
 	win32.ExitProcess(win32.DWORD(code));
 }
 

@@ -593,6 +593,7 @@ enum BuildFlagKind {
 	BuildFlag_NoEntryPoint,
 	BuildFlag_UseLLD,
 	BuildFlag_Vet,
+	BuildFlag_VetExtra,
 	BuildFlag_UseLLVMApi,
 	BuildFlag_IgnoreUnknownAttributes,
 	BuildFlag_ExtraLinkerFlags,
@@ -601,6 +602,7 @@ enum BuildFlagKind {
 	BuildFlag_DisallowDo,
 	BuildFlag_DefaultToNilAllocator,
 	BuildFlag_InsertSemicolon,
+	BuildFlag_StrictStyle,
 
 	BuildFlag_Compact,
 	BuildFlag_GlobalDefinitions,
@@ -706,6 +708,7 @@ bool parse_build_flags(Array<String> args) {
 	add_flag(&build_flags, BuildFlag_NoEntryPoint,      str_lit("no-entry-point"),      BuildFlagParam_None, Command__does_check &~ Command_test);
 	add_flag(&build_flags, BuildFlag_UseLLD,            str_lit("lld"),                 BuildFlagParam_None, Command__does_build);
 	add_flag(&build_flags, BuildFlag_Vet,               str_lit("vet"),                 BuildFlagParam_None, Command__does_check);
+	add_flag(&build_flags, BuildFlag_VetExtra,          str_lit("vet-extra"),           BuildFlagParam_None, Command__does_check);
 	add_flag(&build_flags, BuildFlag_UseLLVMApi,        str_lit("llvm-api"),            BuildFlagParam_None, Command__does_build);
 	add_flag(&build_flags, BuildFlag_IgnoreUnknownAttributes, str_lit("ignore-unknown-attributes"), BuildFlagParam_None, Command__does_check);
 	add_flag(&build_flags, BuildFlag_ExtraLinkerFlags,  str_lit("extra-linker-flags"),              BuildFlagParam_String, Command__does_build);
@@ -714,6 +717,7 @@ bool parse_build_flags(Array<String> args) {
 	add_flag(&build_flags, BuildFlag_DisallowDo,            str_lit("disallow-do"),              BuildFlagParam_None, Command__does_check);
 	add_flag(&build_flags, BuildFlag_DefaultToNilAllocator, str_lit("default-to-nil-allocator"), BuildFlagParam_None, Command__does_check);
 	add_flag(&build_flags, BuildFlag_InsertSemicolon,       str_lit("insert-semicolon"),         BuildFlagParam_None, Command__does_check);
+	add_flag(&build_flags, BuildFlag_StrictStyle,           str_lit("strict-style"),             BuildFlagParam_None, Command__does_check);
 	add_flag(&build_flags, BuildFlag_Compact,           str_lit("compact"),            BuildFlagParam_None, Command_query);
 	add_flag(&build_flags, BuildFlag_GlobalDefinitions, str_lit("global-definitions"), BuildFlagParam_None, Command_query);
 	add_flag(&build_flags, BuildFlag_GoToDefinitions,   str_lit("go-to-definitions"),  BuildFlagParam_None, Command_query);
@@ -873,12 +877,6 @@ bool parse_build_flags(Array<String> args) {
 							String path = value.value_string;
 							path = string_trim_whitespace(path);
 							if (is_build_flag_path_valid(path)) {
-								#if defined(GB_SYSTEM_WINDOWS)
-									String ext = path_extension(path);
-									if (ext == ".exe") {
-										path = substring(path, 0, string_extension_position(path));
-									}
-								#endif
 								build_context.out_filepath = path_to_full_path(heap_allocator(), path);
 							} else {
 								gb_printf_err("Invalid -out path, got %.*s\n", LIT(path));
@@ -1151,6 +1149,10 @@ bool parse_build_flags(Array<String> args) {
 						case BuildFlag_Vet:
 							build_context.vet = true;
 							break;
+						case BuildFlag_VetExtra:
+							build_context.vet = true;
+							build_context.vet_extra = true;
+							break;
 
 						case BuildFlag_UseLLVMApi:
 							build_context.use_llvm_api = true;
@@ -1182,6 +1184,12 @@ bool parse_build_flags(Array<String> args) {
 						case BuildFlag_InsertSemicolon:
 							build_context.insert_semicolon = true;
 							break;
+
+						case BuildFlag_StrictStyle:
+							build_context.insert_semicolon = true;
+							build_context.strict_style = true;
+							break;
+
 
 						case BuildFlag_Compact:
 							if (!build_context.query_data_set_settings.ok) {
@@ -1469,7 +1477,7 @@ void show_timings(Checker *c, Timings *t) {
 void remove_temp_files(String output_base) {
 	if (build_context.keep_temp_files) return;
 
-	auto data = array_make<u8>(heap_allocator(), output_base.len + 10);
+	auto data = array_make<u8>(heap_allocator(), output_base.len + 30);
 	defer (array_free(&data));
 
 	isize n = output_base.len;
@@ -1480,6 +1488,7 @@ void remove_temp_files(String output_base) {
 	} while (0)
 	EXT_REMOVE(".ll");
 	EXT_REMOVE(".bc");
+	EXT_REMOVE("_memcpy_pass.bc");
 	if (build_context.build_mode != BuildMode_Object && !build_context.keep_object_files) {
 	#if defined(GB_SYSTEM_WINDOWS)
 		EXT_REMOVE(".obj");
@@ -1498,8 +1507,15 @@ void remove_temp_files(String output_base) {
 i32 exec_llvm_opt(String output_base) {
 #if defined(GB_SYSTEM_WINDOWS)
 	// For more passes arguments: http://llvm.org/docs/Passes.html
-	return system_exec_command_line_app("llvm-opt",
-		"\"%.*sbin/opt\" \"%.*s.ll\" -o \"%.*s.bc\" %.*s "
+
+  return system_exec_command_line_app("llvm-opt",
+		"\"%.*sbin/opt\" \"%.*s.ll\" -o \"%.*s_memcpy_pass.bc\" -memcpyopt"
+		"",
+		LIT(build_context.ODIN_ROOT),
+		LIT(output_base), LIT(output_base))
+
+  || system_exec_command_line_app("llvm-opt",
+		"\"%.*sbin/opt\" \"%.*s_memcpy_pass.bc\" -o \"%.*s.bc\" %.*s "
 		"",
 		LIT(build_context.ODIN_ROOT),
 		LIT(output_base), LIT(output_base),
@@ -1507,8 +1523,14 @@ i32 exec_llvm_opt(String output_base) {
 #else
 	// NOTE(zangent): This is separate because it seems that LLVM tools are packaged
 	//   with the Windows version, while they will be system-provided on MacOS and GNU/Linux
-	return system_exec_command_line_app("llvm-opt",
-		"opt \"%.*s.ll\" -o \"%.*s.bc\" %.*s "
+
+  return system_exec_command_line_app("llvm-opt",
+    "opt \"%.*s.ll\" -o \"%.*s_memcpy_pass.bc\" -memcpyopt"
+    "",
+    LIT(output_base), LIT(output_base))
+  
+	|| system_exec_command_line_app("llvm-opt",
+		"opt \"%.*s_memcpy_pass.bc\" -o \"%.*s.bc\" %.*s "
 		"",
 		LIT(output_base), LIT(output_base),
 		LIT(build_context.opt_flags));
@@ -1694,6 +1716,11 @@ void print_show_help(String const arg0, String const &command) {
 		print_usage_line(3, "Unused declarations");
 		print_usage_line(0, "");
 
+		print_usage_line(1, "-vet-extra");
+		print_usage_line(2, "Do even more checks than standard vet on the code");
+		print_usage_line(2, "To treat the extra warnings as errors, use -warnings-as-errors");
+		print_usage_line(0, "");
+
 		print_usage_line(1, "-ignore-unknown-attributes");
 		print_usage_line(2, "Ignores unknown attributes");
 		print_usage_line(2, "This can be used with metaprogramming tools");
@@ -1726,6 +1753,14 @@ void print_show_help(String const arg0, String const &command) {
 
 		print_usage_line(1, "-default-to-nil-allocator");
 		print_usage_line(2, "Sets the default allocator to be the nil_allocator, an allocator which does nothing");
+		print_usage_line(0, "");
+
+		print_usage_line(1, "-insert-semicolon");
+		print_usage_line(2, "Inserts semicolons on newlines during tokenization using a basic rule");
+		print_usage_line(0, "");
+
+		print_usage_line(1, "-strict-style");
+		print_usage_line(2, "Enforces code style stricter whilst parsing, requiring such things as trailing commas");
 		print_usage_line(0, "");
 
 		print_usage_line(1, "-ignore-warnings");
@@ -1834,7 +1869,7 @@ void print_show_unused(Checker *c) {
 		}
 		if (build_context.show_unused_with_location) {
 			TokenPos pos = e->token.pos;
-			print_usage_line(2, "%.*s(%td:%td) %.*s", LIT(pos.file), pos.line, pos.column, LIT(e->token.string));
+			print_usage_line(2, "%s %.*s", token_pos_to_string(pos), LIT(e->token.string));
 		} else {
 			print_usage_line(2, "%.*s", LIT(e->token.string));
 		}
@@ -2216,7 +2251,7 @@ int main(int arg_count, char const **arg_ptr) {
 
 		if (build_context.cross_compiling && selected_target_metrics->metrics == &target_essence_amd64) {
 	#ifdef GB_SYSTEM_UNIX
-			system_exec_command_line_app("linker", "x86_64-essence-gcc \"%.*s.o\" -o \"%.*s\" %.*s %.*s", // -ffreestanding -nostdlib
+			system_exec_command_line_app("linker", "x86_64-essence-gcc -ffreestanding -nostdlib \"%.*s.o\" -o \"%.*s\" %.*s %.*s",
 					LIT(output_base), LIT(output_base), LIT(build_context.link_flags), LIT(build_context.extra_linker_flags));
 	#else
 			gb_printf_err("Linking for cross compilation for this platform is not yet supported (%.*s %.*s)\n",

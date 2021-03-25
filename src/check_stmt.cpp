@@ -1,4 +1,4 @@
-bool is_divigering_stmt(Ast *stmt) {
+bool is_diverging_stmt(Ast *stmt) {
 	if (stmt->kind != Ast_ExprStmt) {
 		return false;
 	}
@@ -12,7 +12,7 @@ bool is_divigering_stmt(Ast *stmt) {
 	}
 	Type *t = type_of_expr(expr->CallExpr.proc);
 	t = base_type(t);
-	return t->kind == Type_Proc && t->Proc.diverging;
+	return t != nullptr && t->kind == Type_Proc && t->Proc.diverging;
 }
 
 void check_stmt_list(CheckerContext *ctx, Slice<Ast *> const &stmts, u32 flags) {
@@ -69,7 +69,7 @@ void check_stmt_list(CheckerContext *ctx, Slice<Ast *> const &stmts, u32 flags) 
 				break;
 
 			case Ast_ExprStmt:
-				if (is_divigering_stmt(n)) {
+				if (is_diverging_stmt(n)) {
 					error(n, "Statements after a diverging procedure call are never executed");
 				}
 				break;
@@ -86,7 +86,7 @@ bool check_is_terminating_list(Slice<Ast *> const &stmts, String const &label) {
 			// Okay
 		} else if (stmt->kind == Ast_ValueDecl && !stmt->ValueDecl.is_mutable) {
 			// Okay
-		} else if (is_divigering_stmt(stmt)) {
+		} else if (is_diverging_stmt(stmt)) {
 			return true;
 		} else {
 			return check_is_terminating(stmt, label);
@@ -540,11 +540,11 @@ bool check_using_stmt_entity(CheckerContext *ctx, AstUsingStmt *us, Ast *expr, b
 				gbString expr_str = expr_to_string(expr);
 				error(us->token,
 				      "Namespace collision while 'using' '%s' of: %.*s\n"
-				      "\tat %.*s(%td:%td)\n"
-				      "\tat %.*s(%td:%td)",
+				      "\tat %s\n"
+				      "\tat %s",
 				      expr_str, LIT(found->token.string),
-				      LIT(found->token.pos.file), found->token.pos.line, found->token.pos.column,
-				      LIT(decl->token.pos.file), decl->token.pos.line, decl->token.pos.column
+				      token_pos_to_string(found->token.pos),
+				      token_pos_to_string(decl->token.pos)
 				      );
 				gb_string_free(expr_str);
 				return false;
@@ -558,8 +558,11 @@ bool check_using_stmt_entity(CheckerContext *ctx, AstUsingStmt *us, Ast *expr, b
 		bool is_ptr = is_type_pointer(e->type);
 		Type *t = base_type(type_deref(e->type));
 		if (t->kind == Type_Struct) {
-			// TODO(bill): Make it work for unions too
 			Scope *found = scope_of_node(t->Struct.node);
+			if (found == nullptr) {
+				found = t->Struct.scope;
+			}
+			GB_ASSERT(found != nullptr);
 			for_array(i, found->elements.entries) {
 				Entity *f = found->elements.entries[i].value;
 				if (f->kind == Entity_Variable) {
@@ -644,14 +647,12 @@ void add_constant_switch_case(CheckerContext *ctx, Map<TypeAndToken> *seen, Oper
 				gbString expr_str = expr_to_string(operand.expr);
 				error(operand.expr,
 				      "Duplicate case '%s'\n"
-				      "\tprevious case at %.*s(%td:%td)",
+				      "\tprevious case at %s",
 				      expr_str,
-				      LIT(pos.file), pos.line, pos.column);
+				      token_pos_to_string(pos));
 				gb_string_free(expr_str);
 			} else {
-				error(operand.expr,
-				      "Duplicate case found with previous case at %.*s(%td:%td)",
-				      LIT(pos.file), pos.line, pos.column);
+				error(operand.expr, "Duplicate case found with previous case at %s", token_pos_to_string(pos));
 			}
 			return;
 		}
@@ -768,8 +769,7 @@ void check_inline_range_stmt(CheckerContext *ctx, Ast *node, u32 mod_flags) {
 				TokenPos pos = found->token.pos;
 				error(token,
 				      "Redeclaration of '%.*s' in this scope\n"
-				      "\tat %.*s(%td:%td)",
-				      LIT(str), LIT(pos.file), pos.line, pos.column);
+				      "\tat %s", LIT(str), token_pos_to_string(pos));
 				entity = found;
 			}
 		} else {
@@ -871,8 +871,7 @@ void check_switch_stmt(CheckerContext *ctx, Ast *node, u32 mod_flags) {
 				TokenPos pos = ast_token(first_default).pos;
 				error(stmt,
 				           "multiple default clauses\n"
-				           "\tfirst at %.*s(%td:%td)",
-				           LIT(pos.file), pos.line, pos.column);
+				           "\tfirst at %s", token_pos_to_string(pos));
 			} else {
 				first_default = default_stmt;
 			}
@@ -1134,8 +1133,7 @@ void check_type_switch_stmt(CheckerContext *ctx, Ast *node, u32 mod_flags) {
 				TokenPos pos = ast_token(first_default).pos;
 				error(stmt,
 				      "Multiple default clauses\n"
-				      "\tfirst at %.*s(%td:%td)",
-				      LIT(pos.file), pos.line, pos.column);
+				      "\tfirst at %s", token_pos_to_string(pos));
 			} else {
 				first_default = default_stmt;
 			}
@@ -1205,9 +1203,9 @@ void check_type_switch_stmt(CheckerContext *ctx, Ast *node, u32 mod_flags) {
 					gbString expr_str = expr_to_string(y.expr);
 					error(y.expr,
 					           "Duplicate type case '%s'\n"
-					           "\tprevious type case at %.*s(%td:%td)",
+					           "\tprevious type case at %s",
 					           expr_str,
-					           LIT(pos.file), pos.line, pos.column);
+					           token_pos_to_string(pos));
 					gb_string_free(expr_str);
 					break;
 				}
@@ -1662,16 +1660,15 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 		check_open_scope(ctx, node);
 		check_label(ctx, rs->label, node);
 
-		Type *val0 = nullptr;
-		Type *val1 = nullptr;
-		Entity *entities[2] = {};
-		isize entity_count = 0;
+		auto vals = array_make<Type *>(temporary_allocator(), 0, 2);
+		auto entities = array_make<Entity *>(temporary_allocator(), 0, 2);
 		bool is_map = false;
 		bool use_by_reference_for_value = false;
+		bool is_soa = false;
 
 		Ast *expr = unparen_expr(rs->expr);
 
-
+		isize max_val_count = 2;
 		if (is_ast_range(expr)) {
 			ast_node(ie, BinaryExpr, expr);
 			Operand x = {};
@@ -1681,8 +1678,8 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 			if (!ok) {
 				goto skip_expr_range_stmt;
 			}
-			val0 = x.type;
-			val1 = t_int;
+			array_add(&vals, x.type);
+			array_add(&vals, t_int);
 		} else {
 			Operand operand = {Addressing_Invalid};
 			check_expr_base(ctx, &operand, expr, nullptr);
@@ -1695,8 +1692,8 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 					gb_string_free(t);
 					goto skip_expr_range_stmt;
 				} else {
-					val0 = operand.type;
-					val1 = t_int;
+					array_add(&vals, operand.type);
+					array_add(&vals, t_int);
 					add_type_info_type(ctx, operand.type);
 					goto skip_expr_range_stmt;
 				}
@@ -1706,47 +1703,45 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 				switch (t->kind) {
 				case Type_Basic:
 					if (is_type_string(t) && t->Basic.kind != Basic_cstring) {
-						val0 = t_rune;
-						val1 = t_int;
+						array_add(&vals, t_rune);
+						array_add(&vals, t_int);
 						add_package_dependency(ctx, "runtime", "string_decode_rune");
 					}
 					break;
 
 				case Type_EnumeratedArray:
 					if (is_ptr) use_by_reference_for_value = true;
-					val0 = t->EnumeratedArray.elem;
-					val1 = t->EnumeratedArray.index;
+					array_add(&vals, t->EnumeratedArray.elem);
+					array_add(&vals, t->EnumeratedArray.index);
 					break;
 
 				case Type_Array:
 					if (is_ptr) use_by_reference_for_value = true;
-					val0 = t->Array.elem;
-					val1 = t_int;
+					array_add(&vals, t->Array.elem);
+					array_add(&vals, t_int);
 					break;
 
 				case Type_DynamicArray:
 					if (is_ptr) use_by_reference_for_value = true;
-					val0 = t->DynamicArray.elem;
-					val1 = t_int;
+					array_add(&vals, t->DynamicArray.elem);
+					array_add(&vals, t_int);
 					break;
 
 				case Type_Slice:
 					if (is_ptr) use_by_reference_for_value = true;
-					val0 = t->Slice.elem;
-					val1 = t_int;
+					array_add(&vals, t->Slice.elem);
+					array_add(&vals, t_int);
 					break;
 
 				case Type_Map:
 					if (is_ptr) use_by_reference_for_value = true;
 					is_map = true;
-					val0 = t->Map.key;
-					val1 = t->Map.value;
+					array_add(&vals, t->Map.key);
+					array_add(&vals, t->Map.value);
 					break;
 
 				case Type_Tuple:
-					if (false) {
-						check_not_tuple(ctx, &operand);
-					} else {
+					{
 						isize count = t->Tuple.variables.count;
 						if (count < 1 || count > 3) {
 							check_not_tuple(ctx, &operand);
@@ -1761,17 +1756,18 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 							break;
 						}
 
-						if (count > 1) val0 = t->Tuple.variables[0]->type;
-						if (count > 2) val1 = t->Tuple.variables[1]->type;
+						for_array(ti, t->Tuple.variables) {
+							array_add(&vals, t->Tuple.variables[ti]->type);
+						}
 
-						if (rs->val1 != nullptr && count < 3) {
+						if (rs->vals.count > 1 && rs->vals[1] != nullptr && count < 3) {
 							gbString s = type_to_string(t);
 							error(operand.expr, "Expected a 3-value tuple on the rhs, got (%s)", s);
 							gb_string_free(s);
 							break;
 						}
 
-						if (rs->val0 != nullptr && count < 2) {
+						if (rs->vals.count > 0 && rs->vals[0] != nullptr && count < 2) {
 							gbString s = type_to_string(t);
 							error(operand.expr, "Expected at least a 2-values tuple on the rhs, got (%s)", s);
 							gb_string_free(s);
@@ -1781,10 +1777,21 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 					}
 					break;
 
+				case Type_Struct:
+					if (t->Struct.soa_kind != StructSoa_None) {
+						is_soa = true;
+						if (is_ptr) use_by_reference_for_value = true;
+						array_add(&vals, t->Struct.soa_elem);
+						array_add(&vals, t_int);
+						if (!build_context.use_llvm_api) {
+							error(operand.expr, "#soa structures do not yet support for in loop iteration");
+						}
+					}
+					break;
 				}
 			}
 
-			if (val0 == nullptr) {
+			if (vals.count == 0 || vals[0] == nullptr) {
 				gbString s = expr_to_string(operand.expr);
 				gbString t = type_to_string(operand.type);
 				defer (gb_string_free(s));
@@ -1792,9 +1799,9 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 
 				error(operand.expr, "Cannot iterate over '%s' of type '%s'", s, t);
 
-				if (rs->val0 != nullptr && rs->val1 == nullptr) {
+				if (rs->vals.count == 1) {
 					if (is_type_map(operand.type) || is_type_bit_set(operand.type)) {
-						gbString v = expr_to_string(rs->val0);
+						gbString v = expr_to_string(rs->vals[0]);
 						defer (gb_string_free(v));
 						error_line("\tSuggestion: place parentheses around the expression\n");
 						error_line("\t            for (%s in %s) {\n", v, s);
@@ -1805,10 +1812,15 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 
 		skip_expr_range_stmt:; // NOTE(zhiayang): again, declaring a variable immediately after a label... weird.
 
-		Ast * lhs[2] = {rs->val0, rs->val1};
-		Type *rhs[2] = {val0, val1};
+		if (rs->vals.count > max_val_count) {
+			error(rs->vals[max_val_count], "Expected a maximum of %td identifier%s, got %td", max_val_count, max_val_count == 1 ? "" : "s", rs->vals.count);
+		}
 
-		for (isize i = 0; i < 2; i++) {
+		auto rhs = slice_from_array(vals);
+		auto lhs = slice_make<Ast *>(temporary_allocator(), rhs.count);
+		slice_copy(&lhs, rs->vals);
+
+		for_array(i, rhs) {
 			if (lhs[i] == nullptr) {
 				continue;
 			}
@@ -1834,14 +1846,19 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 							entity->flags &= ~EntityFlag_Value;
 						}
 					}
+					if (is_soa) {
+						if (i == 0) {
+							entity->flags |= EntityFlag_SoaPtrField;
+						}
+					}
 
 					add_entity_definition(&ctx->checker->info, name, entity);
 				} else {
 					TokenPos pos = found->token.pos;
 					error(token,
 					      "Redeclaration of '%.*s' in this scope\n"
-					      "\tat %.*s(%td:%td)",
-					      LIT(str), LIT(pos.file), pos.line, pos.column);
+					      "\tat %s",
+					      LIT(str), token_pos_to_string(pos));
 					entity = found;
 				}
 			} else {
@@ -1852,7 +1869,7 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 				entity = alloc_entity_dummy_variable(builtin_pkg->scope, ast_token(name));
 			}
 
-			entities[entity_count++] = entity;
+			array_add(&entities, entity);
 
 			if (type == nullptr) {
 				entity->type = t_invalid;
@@ -1860,7 +1877,7 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 			}
 		}
 
-		for (isize i = 0; i < entity_count; i++) {
+		for_array(i, entities) {
 			Entity *e = entities[i];
 			DeclInfo *d = decl_info_of_entity(e);
 			GB_ASSERT(d == nullptr);
@@ -2055,8 +2072,8 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 						TokenPos pos = found->token.pos;
 						error(token,
 						      "Redeclaration of '%.*s' in this scope\n"
-						      "\tat %.*s(%td:%td)",
-						      LIT(str), LIT(pos.file), pos.line, pos.column);
+						      "\tat %s",
+						      LIT(str), token_pos_to_string(pos));
 						entity = found;
 					}
 				}
@@ -2166,8 +2183,8 @@ void check_stmt_internal(CheckerContext *ctx, Ast *node, u32 flags) {
 						if (!are_types_identical(this_type, other_type)) {
 							error(e->token,
 							      "Foreign entity '%.*s' previously declared elsewhere with a different type\n"
-							      "\tat %.*s(%td:%td)",
-							      LIT(name), LIT(pos.file), pos.line, pos.column);
+							      "\tat %s",
+							      LIT(name), token_pos_to_string(pos));
 						}
 					} else {
 						string_map_set(fp, key, e);

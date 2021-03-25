@@ -62,9 +62,6 @@ struct lbAddr {
 			Type *result;
 		} map;
 		struct {
-			i32 value_index;
-		} bit_field;
-		struct {
 			Selection sel;
 		} ctx;
 		struct {
@@ -79,6 +76,11 @@ struct lbAddr {
 			bool deref;
 		} relative;
 	};
+};
+
+struct lbIncompleteDebugType {
+	Type *type;
+	LLVMMetadataRef metadata;
 };
 
 struct lbModule {
@@ -96,6 +98,7 @@ struct lbModule {
 	i32 internal_type_level;
 
 	Map<lbValue>  values;           // Key: Entity *
+	Map<lbAddr>   soa_values;       // Key: Entity *
 	StringMap<lbValue>  members;
 	StringMap<lbProcedure *> procedures;
 	Map<Entity *> procedure_values; // Key: LLVMValueRef
@@ -120,6 +123,8 @@ struct lbModule {
 	LLVMDIBuilderRef debug_builder;
 	LLVMMetadataRef debug_compile_unit;
 	Map<LLVMMetadataRef> debug_values; // Key: Pointer
+
+	Array<lbIncompleteDebugType> debug_incomplete_types;
 };
 
 struct lbGenerator {
@@ -243,7 +248,10 @@ struct lbProcedure {
 
 	Ast *curr_stmt;
 
+	Array<Scope *>       scope_stack;
 	Array<lbContextData> context_stack;
+
+	LLVMMetadataRef debug_info;
 
 	lbValue  return_ptr_hint_value;
 	Ast *    return_ptr_hint_ast;
@@ -260,7 +268,7 @@ void lb_generate_module(lbGenerator *gen);
 String lb_mangle_name(lbModule *m, Entity *e);
 String lb_get_entity_name(lbModule *m, Entity *e, String name = {});
 
-LLVMAttributeRef lb_create_enum_attribute(LLVMContextRef ctx, char const *name, u64 value);
+LLVMAttributeRef lb_create_enum_attribute(LLVMContextRef ctx, char const *name, u64 value=0);
 void lb_add_proc_attribute_at_index(lbProcedure *p, isize index, char const *name, u64 value);
 void lb_add_proc_attribute_at_index(lbProcedure *p, isize index, char const *name);
 lbProcedure *lb_create_procedure(lbModule *module, Entity *entity);
@@ -318,7 +326,8 @@ lbValue lb_build_call_expr(lbProcedure *p, Ast *expr);
 
 
 lbAddr lb_find_or_generate_context_ptr(lbProcedure *p);
-void lb_push_context_onto_stack(lbProcedure *p, lbAddr ctx);
+lbContextData *lb_push_context_onto_stack(lbProcedure *p, lbAddr ctx);
+lbContextData *lb_push_context_onto_stack_from_implicit_parameter(lbProcedure *p);
 
 
 lbAddr lb_add_global_generated(lbModule *m, Type *type, lbValue value={});
@@ -330,7 +339,7 @@ lbValue lb_typeid(lbModule *m, Type *type);
 
 lbValue lb_address_from_load_or_generate_local(lbProcedure *p, lbValue value);
 lbValue lb_address_from_load(lbProcedure *p, lbValue value);
-lbDefer lb_add_defer_node(lbProcedure *p, isize scope_index, Ast *stmt);
+void    lb_add_defer_node(lbProcedure *p, isize scope_index, Ast *stmt);
 lbAddr lb_add_local_generated(lbProcedure *p, Type *type, bool zero_init);
 
 lbValue lb_emit_runtime_call(lbProcedure *p, char const *c_name, Array<lbValue> const &args);
@@ -363,6 +372,7 @@ lbValue lb_find_or_add_entity_string(lbModule *m, String const &str);
 lbValue lb_generate_anonymous_proc_lit(lbModule *m, String const &prefix_name, Ast *expr, lbProcedure *parent = nullptr);
 
 bool lb_is_const(lbValue value);
+bool lb_is_const_or_global(lbValue value);
 bool lb_is_const_nil(lbValue value);
 String lb_get_const_string(lbModule *m, lbValue value);
 
@@ -382,6 +392,10 @@ lbValue lb_handle_param_value(lbProcedure *p, Type *parameter_type, ParameterVal
 lbValue lb_get_equal_proc_for_type(lbModule *m, Type *type);
 lbValue lb_get_hasher_proc_for_type(lbModule *m, Type *type);
 lbValue lb_emit_conv(lbProcedure *p, lbValue value, Type *t);
+
+LLVMMetadataRef lb_debug_type(lbModule *m, Type *type);
+
+
 
 #define LB_STARTUP_RUNTIME_PROC_NAME   "__$startup_runtime"
 #define LB_STARTUP_TYPE_INFO_PROC_NAME "__$startup_type_info"
@@ -452,4 +466,36 @@ lbCallingConventionKind const lb_calling_convention_map[ProcCC_MAX] = {
 
 	lbCallingConvention_C,            // ProcCC_None,
 	lbCallingConvention_C,            // ProcCC_InlineAsm,
+};
+
+enum : LLVMDWARFTypeEncoding {
+	LLVMDWARFTypeEncoding_Address = 1,
+	LLVMDWARFTypeEncoding_Boolean = 2,
+	LLVMDWARFTypeEncoding_ComplexFloat = 3,
+	LLVMDWARFTypeEncoding_Float = 4,
+	LLVMDWARFTypeEncoding_Signed = 5,
+	LLVMDWARFTypeEncoding_SignedChar = 6,
+	LLVMDWARFTypeEncoding_Unsigned = 7,
+	LLVMDWARFTypeEncoding_UnsignedChar = 8,
+	LLVMDWARFTypeEncoding_ImaginaryFloat = 9,
+	LLVMDWARFTypeEncoding_PackedDecimal = 10,
+	LLVMDWARFTypeEncoding_NumericString = 11,
+	LLVMDWARFTypeEncoding_Edited = 12,
+	LLVMDWARFTypeEncoding_SignedFixed = 13,
+	LLVMDWARFTypeEncoding_UnsignedFixed = 14,
+	LLVMDWARFTypeEncoding_DecimalFloat = 15,
+	LLVMDWARFTypeEncoding_Utf = 16,
+	LLVMDWARFTypeEncoding_LoUser = 128,
+	LLVMDWARFTypeEncoding_HiUser = 255
+};
+
+
+enum {
+	DW_TAG_array_type       = 1,
+	DW_TAG_enumeration_type = 4,
+	DW_TAG_structure_type   = 19,
+	DW_TAG_union_type       = 23,
+	DW_TAG_vector_type      = 259,
+	DW_TAG_subroutine_type  = 21,
+	DW_TAG_inheritance      = 28,
 };

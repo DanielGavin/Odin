@@ -53,7 +53,7 @@ Type *check_init_variable(CheckerContext *ctx, Entity *e, Operand *operand, Stri
 			defer (gb_string_free(t));
 			error(operand->expr, "Cannot assign a type '%s' to variable '%.*s'", t, LIT(e->token.string));
 			if (e->type == nullptr) {
-				error_line("\tThe type of the variable '%.*s' cannot be inferred as a type does not have a type\n", LIT(e->token.string));
+				error_line("\tThe type of the variable '%.*s' cannot be inferred as a type does not have a default type\n", LIT(e->token.string));
 			}
 			e->type = operand->type;
 			return nullptr;
@@ -687,6 +687,9 @@ void check_proc_decl(CheckerContext *ctx, Entity *e, DeclInfo *d) {
 		check_decl_attributes(ctx, d->attributes, proc_decl_attribute, &ac);
 	}
 
+	if (ac.test) {
+		e->flags |= EntityFlag_Test;
+	}
 	e->Procedure.is_export = ac.is_export;
 	e->deprecated_message = ac.deprecated_message;
 	ac.link_name = handle_link_name(ctx, e->token, ac.link_name, ac.link_prefix);
@@ -701,8 +704,8 @@ void check_proc_decl(CheckerContext *ctx, Entity *e, DeclInfo *d) {
 		}
 	}
 
-	bool is_foreign         = e->Procedure.is_foreign;
-	bool is_export          = e->Procedure.is_export;
+	bool is_foreign = e->Procedure.is_foreign;
+	bool is_export  = e->Procedure.is_export;
 
 	if (e->pkg != nullptr && e->token.string == "main") {
 		if (pt->param_count != 0 ||
@@ -799,14 +802,14 @@ void check_proc_decl(CheckerContext *ctx, Entity *e, DeclInfo *d) {
 				if (!are_signatures_similar_enough(this_type, other_type)) {
 					error(d->proc_lit,
 					      "Redeclaration of foreign procedure '%.*s' with different type signatures\n"
-					      "\tat %.*s(%td:%td)",
-					      LIT(name), LIT(pos.file), pos.line, pos.column);
+					      "\tat %s",
+					      LIT(name), token_pos_to_string(pos));
 				}
 			} else if (!are_types_identical(this_type, other_type)) {
 				error(d->proc_lit,
 				      "Foreign entity '%.*s' previously declared elsewhere with a different type\n"
-				      "\tat %.*s(%td:%td)",
-				      LIT(name), LIT(pos.file), pos.line, pos.column);
+				      "\tat %s",
+				      LIT(name), token_pos_to_string(pos));
 			}
 		} else if (name == "main") {
 			error(d->proc_lit, "The link name 'main' is reserved for internal use");
@@ -828,8 +831,8 @@ void check_proc_decl(CheckerContext *ctx, Entity *e, DeclInfo *d) {
 				// TODO(bill): Better error message?
 				error(d->proc_lit,
 				      "Non unique linking name for procedure '%.*s'\n"
-				      "\tother at %.*s(%td:%td)",
-				      LIT(name), LIT(pos.file), pos.line, pos.column);
+				      "\tother at %s",
+				      LIT(name), token_pos_to_string(pos));
 			} else if (name == "main") {
 				error(d->proc_lit, "The link name 'main' is reserved for internal use");
 			} else {
@@ -919,8 +922,8 @@ void check_global_variable_decl(CheckerContext *ctx, Entity *e, Ast *type_expr, 
 			if (!are_types_identical(this_type, other_type)) {
 				error(e->token,
 				      "Foreign entity '%.*s' previously declared elsewhere with a different type\n"
-				      "\tat %.*s(%td:%td)",
-				      LIT(name), LIT(pos.file), pos.line, pos.column);
+				      "\tat %s",
+				      LIT(name), token_pos_to_string(pos));
 			}
 		} else {
 			string_map_set(fp, key, e);
@@ -1059,7 +1062,7 @@ void check_proc_group_decl(CheckerContext *ctx, Entity *pg_entity, DeclInfo *d) 
 			}
 
 			if (is_invalid) {
-				error_line("\tprevious procedure at %.*s(%td:%td)\n", LIT(pos.file), pos.line, pos.column);
+				error_line("\tprevious procedure at %s\n", token_pos_to_string(pos));
 				q->type = t_invalid;
 			}
 		}

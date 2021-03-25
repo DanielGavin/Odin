@@ -107,9 +107,9 @@ void lb_add_function_type_attributes(LLVMValueRef fn, lbFunctionType *ft, ProcCa
 	}
 
 	LLVMContextRef c = ft->ctx;
-	LLVMAttributeRef noalias_attr   = lb_create_enum_attribute(c, "noalias", true);
-	LLVMAttributeRef nonnull_attr   = lb_create_enum_attribute(c, "nonnull", true);
-	LLVMAttributeRef nocapture_attr = lb_create_enum_attribute(c, "nocapture", true);
+	LLVMAttributeRef noalias_attr   = lb_create_enum_attribute(c, "noalias");
+	LLVMAttributeRef nonnull_attr   = lb_create_enum_attribute(c, "nonnull");
+	LLVMAttributeRef nocapture_attr = lb_create_enum_attribute(c, "nocapture");
 
 	unsigned arg_index = offset;
 	for (unsigned i = 0; i < arg_count; i++) {
@@ -400,14 +400,19 @@ namespace lbAbi386 {
 		    lb_is_type_kind(type, LLVMIntegerTypeKind) &&
 		    type == LLVMIntTypeInContext(c, 128)) {
 		    	// NOTE(bill): Because Windows AMD64 is weird
-			LLVMTypeRef cast_type = LLVMVectorType(LLVMInt64TypeInContext(c), 2);
+		    	// TODO(bill): LLVM is probably bugged here and doesn't correctly generate the right code
+		    	// So even though it is "technically" wrong, no cast might be the best option
+		    	LLVMTypeRef cast_type = nullptr;
+		    	if (true || !is_return) {
+				cast_type = LLVMVectorType(LLVMInt64TypeInContext(c), 2);
+			}
 			return lb_arg_type_direct(type, cast_type, nullptr, nullptr);
 		}
 
 		LLVMAttributeRef attr = nullptr;
 		LLVMTypeRef i1 = LLVMInt1TypeInContext(c);
 		if (type == i1) {
-			attr = lb_create_enum_attribute(c, "zeroext", true);
+			attr = lb_create_enum_attribute(c, "zeroext");
 		}
 		return lb_arg_type_direct(type, nullptr, nullptr, attr);
 	}
@@ -423,7 +428,7 @@ namespace lbAbi386 {
 				if (sz == 0) {
 					args[i] = lb_arg_type_ignore(t);
 				} else {
-					args[i] = lb_arg_type_indirect(t, lb_create_enum_attribute(c, "byval", true));
+					args[i] = lb_arg_type_indirect(t, lb_create_enum_attribute(c, "byval"));
 				}
 			} else {
 				args[i] = non_struct(c, t, false);
@@ -443,7 +448,7 @@ namespace lbAbi386 {
 			case 4: return lb_arg_type_direct(return_type, LLVMIntTypeInContext(c, 32), nullptr, nullptr);
 			case 8: return lb_arg_type_direct(return_type, LLVMIntTypeInContext(c, 64), nullptr, nullptr);
 			}
-			LLVMAttributeRef attr = lb_create_enum_attribute(c, "sret", true);
+			LLVMAttributeRef attr = lb_create_enum_attribute(c, "sret");
 			return lb_arg_type_indirect(return_type, attr);
 		}
 		return non_struct(c, return_type, true);
@@ -591,7 +596,7 @@ namespace lbAbiAmd64SysV {
 		if (is_register(type)) {
 			LLVMAttributeRef attribute = nullptr;
 			if (type == LLVMInt1TypeInContext(c)) {
-				attribute = lb_create_enum_attribute(c, "zeroext", true);
+				attribute = lb_create_enum_attribute(c, "zeroext");
 			}
 			return lb_arg_type_direct(type, nullptr, nullptr, attribute);
 		}
@@ -600,9 +605,9 @@ namespace lbAbiAmd64SysV {
 		if (is_mem_cls(cls, attribute_kind)) {
 			LLVMAttributeRef attribute = nullptr;
 			if (attribute_kind == Amd64TypeAttribute_ByVal) {
-				attribute = lb_create_enum_attribute(c, "byval", true);
+				attribute = lb_create_enum_attribute(c, "byval");
 			} else if (attribute_kind == Amd64TypeAttribute_StructRect) {
-				attribute = lb_create_enum_attribute(c, "sret", true);
+				attribute = lb_create_enum_attribute(c, "sret");
 			}
 			return lb_arg_type_indirect(type, attribute);
 		} else {
@@ -614,7 +619,7 @@ namespace lbAbiAmd64SysV {
 		LLVMAttributeRef attr = nullptr;
 		LLVMTypeRef i1 = LLVMInt1TypeInContext(c);
 		if (type == i1) {
-			attr = lb_create_enum_attribute(c, "zeroext", true);
+			attr = lb_create_enum_attribute(c, "zeroext");
 		}
 		return lb_arg_type_direct(type, nullptr, nullptr, attr);
 	}
@@ -881,7 +886,7 @@ namespace lbAbiAmd64SysV {
 				if (sz == 0) {
 					args[i] = lb_arg_type_ignore(t);
 				} else {
-					args[i] = lb_arg_type_indirect(t, lb_create_enum_attribute(c, "byval", true));
+					args[i] = lb_arg_type_indirect(t, lb_create_enum_attribute(c, "byval"));
 				}
 			} else {
 				args[i] = non_struct(c, t);
@@ -901,7 +906,7 @@ namespace lbAbiAmd64SysV {
 			case 4: return lb_arg_type_direct(return_type, LLVMIntTypeInContext(c, 32), nullptr, nullptr);
 			case 8: return lb_arg_type_direct(return_type, LLVMIntTypeInContext(c, 64), nullptr, nullptr);
 			}
-			LLVMAttributeRef attr = lb_create_enum_attribute(c, "sret", true);
+			LLVMAttributeRef attr = lb_create_enum_attribute(c, "sret");
 			return lb_arg_type_indirect(return_type, attr);
 		} else if (build_context.metrics.os == TargetOs_windows && lb_is_type_kind(return_type, LLVMIntegerTypeKind) && lb_sizeof(return_type) == 16) {
 			return lb_arg_type_direct(return_type, LLVMIntTypeInContext(c, 128), nullptr, nullptr);
@@ -941,7 +946,7 @@ namespace lbAbiArm64 {
 		LLVMAttributeRef attr = nullptr;
 		LLVMTypeRef i1 = LLVMInt1TypeInContext(c);
 		if (type == i1) {
-			attr = lb_create_enum_attribute(c, "zeroext", true);
+			attr = lb_create_enum_attribute(c, "zeroext");
 		}
 		return lb_arg_type_direct(type, nullptr, nullptr, attr);
 	}
@@ -1050,7 +1055,7 @@ namespace lbAbiArm64 {
 				}
 				return lb_arg_type_direct(type, cast_type, nullptr, nullptr);
 			} else {
-				LLVMAttributeRef attr = lb_create_enum_attribute(c, "sret", true);
+				LLVMAttributeRef attr = lb_create_enum_attribute(c, "sret");
 				return lb_arg_type_indirect(type, attr);
 			}
 		}

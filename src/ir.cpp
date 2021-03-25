@@ -202,7 +202,7 @@ gbAllocator ir_allocator(void) {
 	})                                                                \
 	IR_INSTR_KIND(ZeroInit, struct { irValue *address; })             \
 	IR_INSTR_KIND(Store,    struct { irValue *address, *value; bool is_volatile; }) \
-	IR_INSTR_KIND(Load,     struct { Type *type; irValue *address; i64 custom_align; }) \
+	IR_INSTR_KIND(Load,     struct { Type *type; irValue *address; i64 custom_align; bool is_volatile; }) \
 	IR_INSTR_KIND(InlineCode, struct { BuiltinProcId id; Array<irValue *> operands; Type *type; }) \
 	IR_INSTR_KIND(AtomicFence, struct { BuiltinProcId id; })          \
 	IR_INSTR_KIND(AtomicStore, struct {                               \
@@ -1084,11 +1084,12 @@ irValue *ir_instr_store(irProcedure *p, irValue *address, irValue *value, bool i
 	return v;
 }
 
-irValue *ir_instr_load(irProcedure *p, irValue *address) {
+irValue *ir_instr_load(irProcedure *p, irValue *address, bool is_volatile) {
 	irValue *v = ir_alloc_instr(p, irInstr_Load);
 	irInstr *i = &v->Instr;
 	i->Load.address = address;
 	i->Load.type = type_deref(ir_type(address));
+	i->Load.is_volatile = is_volatile;
 
 	if (address) address->uses += 1;
 
@@ -1594,34 +1595,33 @@ irValue *ir_emit_struct_ep(irProcedure *proc, irValue *s, i32 index);
 
 
 
-irDefer ir_add_defer_node(irProcedure *proc, isize scope_index, Ast *stmt) {
+void ir_add_defer_node(irProcedure *proc, isize scope_index, Ast *stmt) {
 	irDefer d = {irDefer_Node};
 	d.scope_index = scope_index;
 	d.context_stack_count = proc->context_stack.count;
 	d.block = proc->curr_block;
 	d.stmt = stmt;
 	array_add(&proc->defer_stmts, d);
-	return d;
 }
 
 
-irDefer ir_add_defer_instr(irProcedure *proc, isize scope_index, irValue *instr) {
+void ir_add_defer_instr(irProcedure *proc, isize scope_index, irValue *instr) {
 	irDefer d = {irDefer_Instr};
 	d.scope_index = proc->scope_index;
+	d.context_stack_count = proc->context_stack.count;
 	d.block = proc->curr_block;
 	d.instr = instr; // NOTE(bill): It will make a copy everytime it is called
 	array_add(&proc->defer_stmts, d);
-	return d;
 }
 
-irDefer ir_add_defer_proc(irProcedure *proc, isize scope_index, irValue *deferred, Array<irValue *> const &result_as_args) {
+void ir_add_defer_proc(irProcedure *proc, isize scope_index, irValue *deferred, Array<irValue *> const &result_as_args) {
 	irDefer d = {irDefer_Proc};
 	d.scope_index = proc->scope_index;
+	d.context_stack_count = proc->context_stack.count;
 	d.block = proc->curr_block;
 	d.proc.deferred = deferred;
 	d.proc.result_as_args = result_as_args;
 	array_add(&proc->defer_stmts, d);
-	return d;
 }
 
 irValue *ir_add_module_constant(irModule *m, Type *type, ExactValue value);
@@ -2510,7 +2510,7 @@ irDebugInfo *ir_add_debug_info_type(irModule *module, Type *type, Entity *e, irD
 		e = type->Named.type_name;
 		if (e) {
 			CheckerInfo *info = module->info;
-			file = ir_add_debug_info_file(module, ast_file_of_filename(info, e->token.pos.file));
+			file = ir_add_debug_info_file(module, ast_file_of_filename(info, get_file_path_string(e->token.pos.file_id)));
 			// TODO(lachsinc): Determine proper scope for type declaration location stuff.
 			scope = file;
 		}
@@ -2875,7 +2875,7 @@ irDebugInfo *ir_add_debug_info_global(irModule *module, irValue *v) {
 
 	// Create or fetch file debug info.
 	CheckerInfo *info = module->info;
-	String filename = e->token.pos.file;
+	String filename = get_file_path_string(e->token.pos.file_id);
 	AstFile *f = ast_file_of_filename(info, filename);
 	GB_ASSERT_NOT_NULL(f);
 	irDebugInfo *scope = ir_add_debug_info_file(module, f);
@@ -2964,7 +2964,7 @@ irDebugInfo *ir_add_debug_info_proc(irProcedure *proc) {
 
 	// Add / retrieve debug info for file.
 	CheckerInfo *info = proc->module->info;
-	String filename = proc->entity->token.pos.file;
+	String filename = get_file_path_string(proc->entity->token.pos.file_id);
 	AstFile *f = ast_file_of_filename(info, filename);
 	irDebugInfo *file = nullptr;
 	if (f) {
@@ -3167,7 +3167,7 @@ irValue *ir_emit_load(irProcedure *p, irValue *address, i64 custom_align) {
 		// return ir_emit(p, ir_instr_load_bool(p, address));
 	// }
 	if (address) address->uses += 1;
-	auto instr = ir_instr_load(p, address);
+	auto instr = ir_instr_load(p, address, false);
 	instr->Instr.Load.custom_align = custom_align;
 	return ir_emit(p, instr);
 }
@@ -3932,22 +3932,39 @@ void ir_addr_store(irProcedure *proc, irAddr addr, irValue *value) {
 		Type *t = type_deref(ir_type(addr.addr));
 		t = base_type(t);
 		GB_ASSERT(t->kind == Type_Struct && t->Struct.soa_kind != StructSoa_None);
-		value = ir_emit_conv(proc, value, t->Struct.soa_elem);
+		Type *elem_type = t->Struct.soa_elem;
+		value = ir_emit_conv(proc, value, elem_type);
+		elem_type = base_type(elem_type);
 
 		irValue *index = addr.soa.index;
 		if (index->kind != irValue_Constant || t->Struct.soa_kind != StructSoa_Fixed) {
 			Type *t = base_type(type_deref(ir_type(addr.addr)));
 			GB_ASSERT(t->kind == Type_Struct && t->Struct.soa_kind != StructSoa_None);
-			i64 count = t->Struct.soa_count;
-			irValue *len = ir_const_int(count);
+			irValue *len = ir_soa_struct_len(proc, addr.addr);
 			ir_emit_bounds_check(proc, ast_token(addr.soa.index_expr), index, len);
 		}
 
-		for_array(i, t->Struct.fields) {
+		isize field_count = 0;
+
+		switch (elem_type->kind) {
+		case Type_Struct:
+			field_count = elem_type->Struct.fields.count;
+			break;
+		case Type_Array:
+			field_count = elem_type->Array.count;
+			break;
+		}
+		for (isize i = 0; i < field_count; i++) {
 			irValue *dst = ir_emit_struct_ep(proc, addr.addr, cast(i32)i);
-			dst = ir_emit_array_ep(proc, dst, index);
 			irValue *src = ir_emit_struct_ev(proc, value, cast(i32)i);
-			ir_emit_store(proc, dst, src);
+			if (t->Struct.soa_kind == StructSoa_Fixed) {
+				dst = ir_emit_array_ep(proc, dst, index);
+				ir_emit_store(proc, dst, src);
+			} else {
+				irValue *field = ir_emit_load(proc, dst);
+				dst = ir_emit_ptr_offset(proc, field, index);
+				ir_emit_store(proc, dst, src);
+			}
 		}
 		return;
 	}
@@ -4604,6 +4621,15 @@ irValue *ir_emit_arith(irProcedure *proc, TokenKind op, irValue *left, irValue *
 	}
 
 handle_op:
+
+	// NOTE(bill): Bit Set Aliases for + and -
+	if (is_type_bit_set(type)) {
+		switch (op) {
+		case Token_Add: op = Token_Or;     break;
+		case Token_Sub: op = Token_AndNot; break;
+		}
+	}
+
 	switch (op) {
 	case Token_Shl:
 		{
@@ -4613,8 +4639,8 @@ handle_op:
 
 			irValue *bits = right;
 
-			irValue *max = ir_value_constant(type, exact_value_i64(8*type_size_of(type) - 1));
-			irValue *less_equal_width = ir_emit(proc, ir_instr_binary_op(proc, Token_LtEq, bits, max, t_llvm_bool));
+			irValue *max = ir_value_constant(type, exact_value_i64(8*type_size_of(type)));
+			irValue *less_equal_width = ir_emit(proc, ir_instr_binary_op(proc, Token_Lt, bits, max, t_llvm_bool));
 
 
 			irValue *zero = ir_value_constant(type, exact_value_i64(0));
@@ -4629,8 +4655,8 @@ handle_op:
 
 			irValue *bits = right;
 
-			irValue *max = ir_value_constant(type, exact_value_i64(8*type_size_of(type) - 1));
-			irValue *less_equal_width = ir_emit(proc, ir_instr_binary_op(proc, Token_LtEq, bits, max, t_llvm_bool));
+			irValue *max = ir_value_constant(type, exact_value_i64(8*type_size_of(type)));
+			irValue *less_equal_width = ir_emit(proc, ir_instr_binary_op(proc, Token_Lt, bits, max, t_llvm_bool));
 
 			bits = ir_emit_select(proc, less_equal_width, bits, max);
 			return ir_emit(proc, ir_instr_binary_op(proc, op, left, bits, type));
@@ -6402,9 +6428,9 @@ irValue *ir_emit_union_cast(irProcedure *proc, irValue *value, Type *type, Token
 			auto args = array_make<irValue *>(ir_allocator(), 6);
 			args[0] = ok;
 
-			args[1] = ir_find_or_add_entity_string(proc->module, pos.file);
-			args[2] = ir_const_int(pos.line);
-			args[3] = ir_const_int(pos.column);
+			args[1] = ir_find_or_add_entity_string(proc->module, get_file_path_string(pos.file_id));
+			args[2] = ir_const_i32(pos.line);
+			args[3] = ir_const_i32(pos.column);
 
 			args[4] = ir_typeid(proc->module, src_type);
 			args[5] = ir_typeid(proc->module, dst_type);
@@ -6462,9 +6488,9 @@ irAddr ir_emit_any_cast_addr(irProcedure *proc, irValue *value, Type *type, Toke
 		auto args = array_make<irValue *>(ir_allocator(), 6);
 		args[0] = ok;
 
-		args[1] = ir_find_or_add_entity_string(proc->module, pos.file);
-		args[2] = ir_const_int(pos.line);
-		args[3] = ir_const_int(pos.column);
+		args[1] = ir_find_or_add_entity_string(proc->module, get_file_path_string(pos.file_id));
+		args[2] = ir_const_i32(pos.line);
+		args[3] = ir_const_i32(pos.column);
 
 		args[4] = any_typeid;
 		args[5] = dst_typeid;
@@ -6659,9 +6685,9 @@ void ir_emit_bounds_check(irProcedure *proc, Token token, irValue *index, irValu
 	len = ir_emit_conv(proc, len, t_int);
 
 	gbAllocator a = ir_allocator();
-	irValue *file = ir_find_or_add_entity_string(proc->module, token.pos.file);
-	irValue *line = ir_const_int(token.pos.line);
-	irValue *column = ir_const_int(token.pos.column);
+	irValue *file = ir_find_or_add_entity_string(proc->module, get_file_path_string(token.pos.file_id));
+	irValue *line = ir_const_i32(token.pos.line);
+	irValue *column = ir_const_i32(token.pos.column);
 
 
 	auto args = array_make<irValue *>(ir_allocator(), 5);
@@ -6683,9 +6709,9 @@ void ir_emit_slice_bounds_check(irProcedure *proc, Token token, irValue *low, ir
 	}
 
 	gbAllocator a = ir_allocator();
-	irValue *file = ir_find_or_add_entity_string(proc->module, token.pos.file);
-	irValue *line = ir_const_int(token.pos.line);
-	irValue *column = ir_const_int(token.pos.column);
+	irValue *file = ir_find_or_add_entity_string(proc->module, get_file_path_string(token.pos.file_id));
+	irValue *line = ir_const_i32(token.pos.line);
+	irValue *column = ir_const_i32(token.pos.column);
 	high = ir_emit_conv(proc, high, t_int);
 
 	if (!lower_value_used) {
@@ -6722,9 +6748,9 @@ void ir_emit_dynamic_array_bounds_check(irProcedure *proc, Token token, irValue 
 	}
 
 	gbAllocator a = ir_allocator();
-	irValue *file = ir_find_or_add_entity_string(proc->module, token.pos.file);
-	irValue *line = ir_const_int(token.pos.line);
-	irValue *column = ir_const_int(token.pos.column);
+	irValue *file = ir_find_or_add_entity_string(proc->module, get_file_path_string(token.pos.file_id));
+	irValue *line = ir_const_i32(token.pos.line);
+	irValue *column = ir_const_i32(token.pos.column);
 	low  = ir_emit_conv(proc, low,  t_int);
 	high = ir_emit_conv(proc, high, t_int);
 
@@ -7060,9 +7086,9 @@ bool is_double_pointer(Type *t) {
 irValue *ir_emit_source_code_location(irProcedure *proc, String procedure, TokenPos pos) {
 	gbAllocator a = ir_allocator();
 	irValue *v = ir_alloc_value(irValue_SourceCodeLocation);
-	v->SourceCodeLocation.file      = ir_find_or_add_entity_string(proc->module, pos.file);
-	v->SourceCodeLocation.line      = ir_const_int(pos.line);
-	v->SourceCodeLocation.column    = ir_const_int(pos.column);
+	v->SourceCodeLocation.file      = ir_find_or_add_entity_string(proc->module, get_file_path_string(pos.file_id));
+	v->SourceCodeLocation.line      = ir_const_i32(pos.line);
+	v->SourceCodeLocation.column    = ir_const_i32(pos.column);
 	v->SourceCodeLocation.procedure = ir_find_or_add_entity_string(proc->module, procedure);
 	return v;
 }
@@ -7511,6 +7537,18 @@ irValue *ir_build_builtin_proc(irProcedure *proc, Ast *expr, TypeAndValue tv, Bu
 	case BuiltinProc_cpu_relax:
 		return ir_emit(proc, ir_instr_inline_code(proc, id, {}, nullptr));
 
+	case BuiltinProc_volatile_store:  {
+		irValue *dst = ir_build_expr(proc, ce->args[0]);
+		irValue *val = ir_build_expr(proc, ce->args[1]);
+		val = ir_emit_conv(proc, val, type_deref(ir_type(dst)));
+		return ir_emit(proc, ir_instr_store(proc, dst, val, true));
+	}
+
+	case BuiltinProc_volatile_load: {
+		irValue *dst = ir_build_expr(proc, ce->args[0]);
+		return ir_emit(proc, ir_instr_load(proc, dst, true));
+	}
+
 	case BuiltinProc_atomic_fence:
 	case BuiltinProc_atomic_fence_acq:
 	case BuiltinProc_atomic_fence_rel:
@@ -7939,11 +7977,11 @@ irValue *ir_build_call_expr(irProcedure *proc, Ast *expr) {
 irValue *ir_build_expr_internal(irProcedure *proc, Ast *expr) {
 	Ast *original_expr = expr;
 	expr = unparen_expr(expr);
-	// ir_push_debug_location(proc->module, expr, proc->debug_scope);
-	// defer (ir_pop_debug_location(proc->module));
+
+	TokenPos expr_pos = ast_token(expr).pos;
 
 	TypeAndValue tv = type_and_value_of_expr(expr);
-	GB_ASSERT(tv.mode != Addressing_Invalid);
+	GB_ASSERT_MSG(tv.mode != Addressing_Invalid, "invalid expression '%s' @ %s", expr_to_string(expr), token_pos_to_string(expr_pos));
 	if (tv.mode == Addressing_Type) {
 		// HACK TODO(bill): This is hack but it should be safe in virtually all cases
 		irValue *v = ir_typeid(proc->module, tv.type);
@@ -8001,7 +8039,7 @@ irValue *ir_build_expr_internal(irProcedure *proc, Ast *expr) {
 				return ir_addr_load(proc, ir_build_addr(proc, expr));
 			}
 
-			GB_PANIC("Error in: %.*s(%td:%td) %s\n", LIT(proc->name), e->token.pos.line, e->token.pos.column);
+			GB_PANIC("Error in: %s %s\n", LIT(proc->name), token_pos_to_string(e->token.pos));
 		}
 
 		return ir_add_module_constant(proc->module, tv.type, tv.value);
@@ -8021,12 +8059,12 @@ irValue *ir_build_expr_internal(irProcedure *proc, Ast *expr) {
 	switch (expr->kind) {
 	case_ast_node(bl, BasicLit, expr);
 		TokenPos pos = bl->token.pos;
-		GB_PANIC("Non-constant basic literal %.*s(%td:%td) - %.*s", LIT(pos.file), pos.line, pos.column, LIT(token_strings[bl->token.kind]));
+		GB_PANIC("Non-constant basic literal %s - %.*s", token_pos_to_string(pos), LIT(token_strings[bl->token.kind]));
 	case_end;
 
 	case_ast_node(bd, BasicDirective, expr);
 		TokenPos pos = bd->token.pos;
-		GB_PANIC("Non-constant basic literal %.*s(%td:%td) - %.*s", LIT(pos.file), pos.line, pos.column, LIT(bd->name));
+		GB_PANIC("Non-constant basic literal %s - %.*s", token_pos_to_string(pos), LIT(bd->name));
 	case_end;
 
 	case_ast_node(i, Implicit, expr);
@@ -8045,8 +8083,8 @@ irValue *ir_build_expr_internal(irProcedure *proc, Ast *expr) {
 		if (e->kind == Entity_Builtin) {
 			Token token = ast_token(expr);
 			GB_PANIC("TODO(bill): ir_build_expr Entity_Builtin '%.*s'\n"
-			         "\t at %.*s(%td:%td)", LIT(builtin_procs[e->Builtin.id].name),
-			         LIT(token.pos.file), token.pos.line, token.pos.column);
+			         "\t at %s", LIT(builtin_procs[e->Builtin.id].name),
+			         token_pos_to_string(token.pos));
 			return nullptr;
 		} else if (e->kind == Entity_Nil) {
 			return ir_value_nil(tv.type);
@@ -8242,9 +8280,9 @@ irValue *ir_build_expr_internal(irProcedure *proc, Ast *expr) {
 					auto args = array_make<irValue *>(ir_allocator(), 6);
 					args[0] = ok;
 
-					args[1] = ir_find_or_add_entity_string(proc->module, pos.file);
-					args[2] = ir_const_int(pos.line);
-					args[3] = ir_const_int(pos.column);
+					args[1] = ir_find_or_add_entity_string(proc->module, get_file_path_string(pos.file_id));
+					args[2] = ir_const_i32(pos.line);
+					args[3] = ir_const_i32(pos.column);
 
 					args[4] = ir_typeid(proc->module, src_type);
 					args[5] = ir_typeid(proc->module, dst_type);
@@ -8267,9 +8305,9 @@ irValue *ir_build_expr_internal(irProcedure *proc, Ast *expr) {
 					auto args = array_make<irValue *>(ir_allocator(), 6);
 					args[0] = ok;
 
-					args[1] = ir_find_or_add_entity_string(proc->module, pos.file);
-					args[2] = ir_const_int(pos.line);
-					args[3] = ir_const_int(pos.column);
+					args[1] = ir_find_or_add_entity_string(proc->module, get_file_path_string(pos.file_id));
+					args[2] = ir_const_i32(pos.line);
+					args[3] = ir_const_i32(pos.column);
 
 					args[4] = any_id;
 					args[5] = id;
@@ -9632,9 +9670,9 @@ irAddr ir_build_addr(irProcedure *proc, Ast *expr) {
 	TokenPos token_pos = ast_token(expr).pos;
 	GB_PANIC("Unexpected address expression\n"
 	         "\tAst: %.*s @ "
-	         "%.*s(%td:%td)\n",
+	         "%s\n",
 	         LIT(ast_strings[expr->kind]),
-	         LIT(token_pos.file), token_pos.line, token_pos.column);
+	         token_pos_to_string(token_pos));
 
 
 	return ir_addr(nullptr);
@@ -10246,7 +10284,6 @@ irAddr ir_store_range_stmt_val(irProcedure *proc, Ast *stmt_val, irValue *value)
 			// gb_printf_err("%s\n", expr_to_string(stmt_val));
 			// gb_printf_err("Entity: %s -> Value: %s\n", type_to_string(e->type), type_to_string(vt));
 			// Token tok = ast_token(stmt_val);
-			// gb_printf_err("%.*s(%td:%td)\n", LIT(tok.pos.file), tok.pos.line, tok.pos.column);
 		}
 	}
 	ir_addr_store(proc, addr, value);
@@ -10698,18 +10735,18 @@ void ir_build_stmt_internal(irProcedure *proc, Ast *node) {
 
 		Type *val0_type = nullptr;
 		Type *val1_type = nullptr;
-		if (rs->val0 != nullptr && !is_blank_ident(rs->val0)) {
-			val0_type = type_of_expr(rs->val0);
+		if (rs->vals.count > 0 && rs->vals[0] != nullptr && !is_blank_ident(rs->vals[0])) {
+			val0_type = type_of_expr(rs->vals[0]);
 		}
-		if (rs->val1 != nullptr && !is_blank_ident(rs->val1)) {
-			val1_type = type_of_expr(rs->val1);
+		if (rs->vals.count > 1 && rs->vals[1] != nullptr && !is_blank_ident(rs->vals[1])) {
+			val1_type = type_of_expr(rs->vals[1]);
 		}
 
 		if (val0_type != nullptr) {
-			ir_add_local_for_identifier(proc, rs->val0, true);
+			ir_add_local_for_identifier(proc, rs->vals[0], true);
 		}
 		if (val1_type != nullptr) {
-			ir_add_local_for_identifier(proc, rs->val1, true);
+			ir_add_local_for_identifier(proc, rs->vals[1], true);
 		}
 
 		irValue *val = nullptr;
@@ -10814,11 +10851,11 @@ void ir_build_stmt_internal(irProcedure *proc, Ast *node) {
 
 
 		if (is_map) {
-			if (val0_type) ir_store_range_stmt_val(proc, rs->val0, key);
-			if (val1_type) ir_store_range_stmt_val(proc, rs->val1, val);
+			if (val0_type) ir_store_range_stmt_val(proc, rs->vals[0], key);
+			if (val1_type) ir_store_range_stmt_val(proc, rs->vals[1], val);
 		} else {
-			if (val0_type) ir_store_range_stmt_val(proc, rs->val0, val);
-			if (val1_type) ir_store_range_stmt_val(proc, rs->val1, key);
+			if (val0_type) ir_store_range_stmt_val(proc, rs->vals[0], val);
+			if (val1_type) ir_store_range_stmt_val(proc, rs->vals[1], key);
 		}
 
 		ir_push_target_list(proc, rs->label, done, loop, nullptr);
@@ -12902,12 +12939,46 @@ void ir_gen_tree(irGen *s) {
 		ir_emit(proc, ir_alloc_instr(proc, irInstr_StartupRuntime));
 		Array<irValue *> empty_args = {};
 		if (build_context.command_kind == Command_test) {
+			Type *t_Internal_Test = find_type_in_pkg(m->info, str_lit("testing"), str_lit("Internal_Test"));
+			Type *array_type = alloc_type_array(t_Internal_Test, m->info->testing_procedures.count);
+			Type *slice_type = alloc_type_slice(t_Internal_Test);
+			irValue *all_tests_array = ir_add_global_generated(proc->module, array_type, nullptr);
+
 			for_array(i, m->info->testing_procedures) {
-				Entity *e = m->info->testing_procedures[i];
-				irValue **found = map_get(&proc->module->values, hash_entity(e));
+				Entity *testing_proc = m->info->testing_procedures[i];
+				String name = testing_proc->token.string;
+				irValue **found = map_get(&m->values, hash_entity(testing_proc));
 				GB_ASSERT(found != nullptr);
-				ir_emit_call(proc, *found, empty_args);
+
+				String pkg_name = {};
+				if (testing_proc->pkg != nullptr) {
+					pkg_name = testing_proc->pkg->name;
+				}
+				irValue *v_pkg = ir_find_or_add_entity_string(m, pkg_name);
+				irValue *v_name = ir_find_or_add_entity_string(m, name);
+				irValue *v_p = *found;
+
+
+				irValue *elem_ptr = ir_emit_array_epi(proc, all_tests_array, cast(i32)i);
+				irValue *pkg_ptr  = ir_emit_struct_ep(proc, elem_ptr, 0);
+				irValue *name_ptr = ir_emit_struct_ep(proc, elem_ptr, 1);
+				irValue *p_ptr    = ir_emit_struct_ep(proc, elem_ptr, 2);
+				ir_emit_store(proc, pkg_ptr,  v_pkg);
+				ir_emit_store(proc, name_ptr, v_name);
+				ir_emit_store(proc, p_ptr,    v_p);
 			}
+
+			irValue *all_tests_slice = ir_add_local_generated(proc, slice_type, true);
+			ir_fill_slice(proc, all_tests_slice,
+			              ir_array_elem(proc, all_tests_array),
+			              ir_const_int(m->info->testing_procedures.count));
+
+
+			irValue *runner = ir_get_package_value(m, str_lit("testing"), str_lit("runner"));
+
+			auto args = array_make<irValue *>(temporary_allocator(), 1);
+			args[0] = ir_emit_load(proc, all_tests_slice);
+			ir_emit_call(proc, runner, args);
 		} else {
 			irValue **found = map_get(&proc->module->values, hash_entity(entry_point));
 			if (found != nullptr) {
