@@ -11,6 +11,15 @@ import "core:mem"
 Brace_Style :: enum {
 	_1TBS,
 	Allman,
+	Stroustrup,
+	K_And_R,
+}
+
+Block_Type :: enum {
+	None,
+	If_Stmt,
+	Proc,
+	Generic,
 }
 
 Alignment_Style :: enum {
@@ -29,7 +38,6 @@ Config :: struct {
 	align_assignments:    bool,
 	align_style:          Alignment_Style,
 	indent_cases:         bool,
-	newline_else:         bool,
 }
 
 default_style := Config {
@@ -38,12 +46,11 @@ default_style := Config {
 	convert_do = false,
 	semicolons = true,
 	tabs = true,
-	brace_style = ._1TBS,
+	brace_style = .Stroustrup,
 	split_multiple_stmts = true,
 	align_assignments = true,
 	align_style = .Align_On_Type_And_Equals,
 	indent_cases = false,
-	newline_else = false,
 };
 
 Printer :: struct {
@@ -362,9 +369,9 @@ write_string :: proc(p: ^Printer, pos: tokenizer.Pos, str: string) {
 	p.last_position = p.source_position;
 }
 
-write_byte :: proc(p: ^Printer, b: byte) {
+write_byte :: proc(p: ^Printer, b: byte, ignore_indent := false) {
 
-	if p.out_position.column == 1 && b != '\t' && b != '\n' {
+	if p.out_position.column == 1 && !ignore_indent && b != '\n' {
 		write_indent(p);
 	}
 
@@ -389,11 +396,11 @@ write_indent :: proc(p: ^Printer) {
 
 	if p.config.tabs {
 		for i := 0; i < p.depth; i += 1 {
-			write_byte(p, '\t');
+			write_byte(p, '\t', true);
 		}
 	} else {
 		for i := 0; i < p.depth * p.config.spaces; i += 1 {
-			write_byte(p, ' ');
+			write_byte(p, ' ', true);
 		}
 	}
 }
@@ -547,8 +554,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 			print_exprs(p, v.variants, ", ");
 			print(p, rbrace);
 		} else {
-			print(p, space);
-			print_begin_brace(p, v.pos);
+			print_begin_brace(p, v.pos, .Generic);
 			print(p, newline);
 			set_source_position(p, v.variants[len(v.variants) - 1].pos);
 			print_exprs(p, v.variants, ",", true);
@@ -568,8 +574,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 			print_exprs(p, v.fields, ", ");
 			print(p, rbrace);
 		} else {
-			print(p, space);
-			print_begin_brace(p, v.pos);
+			print_begin_brace(p, v.pos, .Generic);
 			print(p, newline);
 			set_source_position(p, v.fields[len(v.fields) - 1].pos);
 			print_enum_fields(p, v.fields, ",");
@@ -605,8 +610,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 			print_field_list(p, v.fields, ", ");
 			print(p, rbrace);
 		} else {
-			print(p, space);
-			print_begin_brace(p, v.pos);
+			print_begin_brace(p, v.pos, .Generic);
 			print(p, newline);
 			set_source_position(p, v.fields.pos);
 			print_struct_field_list(p, v.fields, ",");
@@ -630,8 +634,8 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		}
 
 		if v.body != nil {
-			print(p, space);
-			print_stmt(p, v.body);
+			set_source_position(p, v.body.pos);
+			print_stmt(p, v.body, .Proc);
 		} else {
 			print(p, space, "---");
 		}
@@ -675,7 +679,7 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 		print(p, v.tok);
 
 		if len(v.args) != 0 && v.pos.line != v.args[len(v.args) - 1].pos.line {
-			print_begin_brace(p, v.pos);
+			print_begin_brace(p, v.pos, .Generic);
 			print(p, newline);
 			set_source_position(p, v.args[len(v.args) - 1].pos);
 			print_exprs(p, v.args, ",", true);
@@ -689,11 +693,10 @@ print_expr :: proc(p: ^Printer, expr: ^ast.Expr) {
 
 		if v.type != nil {
 			print_expr(p, v.type);
-			print(p, space);
 		}
 
 		if len(v.elems) != 0 && v.pos.line != v.elems[len(v.elems) - 1].pos.line {
-			print_begin_brace(p, v.pos);
+			print_begin_brace(p, v.pos, .Generic);
 			print(p, newline);
 			set_source_position(p, v.elems[len(v.elems) - 1].pos);
 			print_exprs(p, v.elems, ",", true);
@@ -1103,7 +1106,7 @@ print_signature_list :: proc(p: ^Printer, list: ^ast.Field_List, sep := "", remo
 	}
 }
 
-print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stmt := false) {
+print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, block_type: Block_Type = .Generic, empty_block := false, block_stmt := false) {
 
 	using ast;
 
@@ -1138,7 +1141,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 		if v.pos.line == v.end.line && len(v.stmts) > 1 && p.config.split_multiple_stmts {
 
 			if !empty_block {
-				print_begin_brace(p, v.pos);
+				print_begin_brace(p, v.pos, block_type);
 			}
 
 			set_source_position(p, v.pos);
@@ -1166,7 +1169,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 			}
 		} else {
 			if !empty_block {
-				print_begin_brace(p, v.pos);
+				print_begin_brace(p, v.pos, block_type);
 			}
 
 			set_source_position(p, v.pos);
@@ -1206,28 +1209,24 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 
 		if uses_do && !p.config.convert_do {
 			print(p, space, "do", space);
-			print_stmt(p, v.body, true);
+			print_stmt(p, v.body, .If_Stmt, true);
 		} else {
 			if uses_do {
 				print(p, newline);
 			}
 
-			print(p, space);
-
-			print_stmt(p, v.body);
+			print_stmt(p, v.body, .If_Stmt);
 		}
 
 		if v.else_stmt != nil {
 
-			if p.config.newline_else {
+			if p.config.brace_style == .Allman || p.config.brace_style == .Stroustrup {
 				print(p, newline);
 			} else {
 				print(p, space);
 			}
 
 			print(p, "else");
-
-			print(p, space);
 
 			set_source_position(p, v.else_stmt.pos);
 
@@ -1408,11 +1407,14 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 		}
 
 		print(p, "for", space);
-		print_expr(p, v.val0);
 
-		if v.val1 != nil {
+		if len(v.vals) >= 1 {
+			print_expr(p, v.vals[0]);
+		}
+
+		if len(v.vals) >= 2 {
 			print(p, ",", space);
-			print_expr(p, v.val1);
+			print_expr(p, v.vals[1]);
 			print(p, space);
 		} else {
 			print(p, space);
@@ -1453,7 +1455,7 @@ print_stmt :: proc(p: ^Printer, stmt: ^ast.Stmt, empty_block := false, block_stm
 
 		if v.else_stmt != nil {
 
-			if p.config.newline_else {
+			if p.config.brace_style == .Allman {
 				print(p, newline);
 			} else {
 				print(p, space);
@@ -1661,20 +1663,22 @@ print_file :: proc(p: ^Printer, file: ^ast.File) {
 	write_whitespaces(p, p.current_whitespace);
 }
 
-print_begin_brace :: proc(p: ^Printer, begin: tokenizer.Pos) {
+print_begin_brace :: proc(p: ^Printer, begin: tokenizer.Pos, type: Block_Type) {
 
 	set_source_position(p, begin);
 
-	if p.config.brace_style == .Allman {
+	newline_braced := p.config.brace_style == .Allman;
+	newline_braced |= p.config.brace_style == .K_And_R && type == .Proc;
+	newline_braced &= p.config.brace_style != ._1TBS;
 
-		//only newline when it isn't a empty block
-		if p.last_position.line == p.source_position.line {
-			print(p, newline);
-		}
-
+	if newline_braced {
+		print(p, newline);
 		print(p, lbrace);
 		print(p, indent);
-	} else if p.config.brace_style == ._1TBS {
+	}
+
+	else {
+		print(p, space);
 		print(p, lbrace);
 		print(p, indent);
 	}
@@ -1699,7 +1703,7 @@ print_block_stmts :: proc(p: ^Printer, stmts: []^ast.Stmt, newline_each := false
 			set_assign_alignment_padding(p, assignment_stmt, stmts[i + 1:]);
 		}
 
-		print_stmt(p, stmt, false, true);
+		print_stmt(p, stmt, .Generic, false, true);
 	}
 }
 
