@@ -54,6 +54,7 @@ import base64         "core:encoding/base64"
 import csv            "core:encoding/csv"
 import hxa            "core:encoding/hxa"
 import json           "core:encoding/json"
+import varint         "core:encoding/varint"
 
 import fmt            "core:fmt"
 import hash           "core:hash"
@@ -103,6 +104,7 @@ import time           "core:time"
 
 import unicode        "core:unicode"
 import utf8           "core:unicode/utf8"
+import utf8string     "core:unicode/utf8/utf8string"
 import utf16          "core:unicode/utf16"
 
 main :: proc(){}
@@ -153,6 +155,7 @@ _ :: base64
 _ :: csv
 _ :: hxa
 _ :: json
+_ :: varint
 _ :: fmt
 _ :: hash
 _ :: image
@@ -191,4 +194,5 @@ _ :: thread
 _ :: time
 _ :: unicode
 _ :: utf8
+_ :: utf8string
 _ :: utf16
