@@ -30,6 +30,7 @@ HBRUSH :: distinct HANDLE
 HGDIOBJ :: distinct HANDLE
 HBITMAP :: distinct HANDLE
 HGLOBAL :: distinct HANDLE
+HHOOK :: distinct HANDLE
 BOOL :: distinct b32
 BYTE :: distinct u8
 BOOLEAN :: distinct b8
@@ -58,6 +59,7 @@ LPARAM :: LONG_PTR
 WPARAM :: UINT_PTR
 LRESULT :: LONG_PTR
 LPRECT :: ^RECT
+LPPOINT :: ^POINT
 
 UINT8  ::  u8
 UINT16 :: u16
@@ -95,6 +97,7 @@ LPPROCESS_INFORMATION :: ^PROCESS_INFORMATION
 PSECURITY_ATTRIBUTES :: ^SECURITY_ATTRIBUTES
 LPSECURITY_ATTRIBUTES :: ^SECURITY_ATTRIBUTES
 LPSTARTUPINFO :: ^STARTUPINFO
+LPTRACKMOUSEEVENT :: ^TRACKMOUSEEVENT
 VOID :: rawptr
 PVOID :: rawptr
 LPVOID :: rawptr
@@ -193,7 +196,27 @@ GetFileExInfoStandard: GET_FILEEX_INFO_LEVELS : 0
 GetFileExMaxInfoLevel: GET_FILEEX_INFO_LEVELS : 1
 
 
+TIMERPROC :: #type proc "stdcall" (HWND, UINT, UINT_PTR, DWORD)
+
 WNDPROC :: #type proc "stdcall" (HWND, UINT, WPARAM, LPARAM) -> LRESULT
+
+HOOKPROC :: #type proc "stdcall" (code: c_int, wParam: WPARAM, lParam: LPARAM) -> LRESULT
+
+CWPRETSTRUCT :: struct {
+	lResult: LRESULT,
+	lParam: LPARAM,
+	wParam: WPARAM,
+	message: UINT,
+	hwnd: HWND,
+}
+
+KBDLLHOOKSTRUCT :: struct {
+	vkCode: DWORD,
+	scanCode: DWORD,
+	flags: DWORD,
+	time: DWORD,
+	dwExtraInfo: ULONG_PTR,
+}
 
 WNDCLASSA :: struct {
 	style: UINT,
@@ -269,6 +292,13 @@ PAINTSTRUCT :: struct {
 	rgbReserved: [32]BYTE,
 }
 
+TRACKMOUSEEVENT :: struct {
+	cbSize: DWORD,
+	dwFlags: DWORD,
+	hwndTrack: HWND,
+	dwHoverTime: DWORD,
+}
+
 WIN32_FIND_DATAW :: struct {
 	dwFileAttributes: DWORD,
 	ftCreationTime: FILETIME,
@@ -312,6 +342,65 @@ CREATESTRUCTW:: struct {
 	dwExStyle:      DWORD,
 }
 
+// MessageBox() Flags
+MB_OK                :: 0x00000000
+MB_OKCANCEL          :: 0x00000001
+MB_ABORTRETRYIGNORE  :: 0x00000002
+MB_YESNOCANCEL       :: 0x00000003
+MB_YESNO             :: 0x00000004
+MB_RETRYCANCEL       :: 0x00000005
+MB_CANCELTRYCONTINUE :: 0x00000006
+
+MB_ICONHAND        :: 0x00000010
+MB_ICONQUESTION    :: 0x00000020
+MB_ICONEXCLAMATION :: 0x00000030
+MB_ICONASTERISK    :: 0x00000040
+MB_USERICON        :: 0x00000080
+MB_ICONWARNING     :: MB_ICONEXCLAMATION
+MB_ICONERROR       :: MB_ICONHAND
+MB_ICONINFORMATION :: MB_ICONASTERISK
+MB_ICONSTOP        :: MB_ICONHAND
+
+MB_DEFBUTTON1 :: 0x00000000
+MB_DEFBUTTON2 :: 0x00000100
+MB_DEFBUTTON3 :: 0x00000200
+MB_DEFBUTTON4 :: 0x00000300
+
+MB_APPLMODAL   :: 0x00000000
+MB_SYSTEMMODAL :: 0x00001000
+MB_TASKMODAL   :: 0x00002000
+MB_HELP        :: 0x00004000 // Help Button
+
+MB_NOFOCUS              :: 0x00008000
+MB_SETFOREGROUND        :: 0x00010000
+MB_DEFAULT_DESKTOP_ONLY :: 0x00020000
+MB_TOPMOST              :: 0x00040000
+MB_RIGHT                :: 0x00080000
+MB_RTLREADING           :: 0x00100000
+
+MB_SERVICE_NOTIFICATION      :: 0x00200000
+MB_SERVICE_NOTIFICATION_NT3X :: 0x00040000
+
+MB_TYPEMASK :: 0x0000000F
+MB_ICONMASK :: 0x000000F0
+MB_DEFMASK  :: 0x00000F00
+MB_MODEMASK :: 0x00003000
+MB_MISCMASK :: 0x0000C000
+
+// Dialog Box Command IDs
+IDOK       :: 1
+IDCANCEL   :: 2
+IDABORT    :: 3
+IDRETRY    :: 4
+IDIGNORE   :: 5
+IDYES      :: 6
+IDNO       :: 7
+IDCLOSE    :: 8
+IDHELP     :: 9
+IDTRYAGAIN :: 10
+IDCONTINUE :: 11
+IDTIMEOUT  :: 32000
+
 CS_VREDRAW         : UINT : 0x0001
 CS_HREDRAW         : UINT : 0x0002
 CS_DBLCLKS         : UINT : 0x0008
@@ -324,13 +413,6 @@ CS_BYTEALIGNCLIENT : UINT : 0x1000
 CS_BYTEALIGNWINDOW : UINT : 0x2000
 CS_GLOBALCLASS     : UINT : 0x4000
 CS_DROPSHADOW      : UINT : 0x0002_0000
-
-GWL_EXSTYLE    : c_int : -20
-GWLP_HINSTANCE : c_int : -6
-GWLP_ID        : c_int : -12
-GWL_STYLE      : c_int : -16
-GWLP_USERDATA  : c_int : -21
-GWLP_WNDPROC   : c_int : -4
 
 WS_BORDER           : UINT : 0x0080_0000
 WS_CAPTION          : UINT : 0x00C0_0000
@@ -399,7 +481,207 @@ SW_RESTORE         : c_int : 9
 SW_SHOWDEFAULT     : c_int : 10
 SW_FORCEMINIMIZE   : c_int : 11
 
-CW_USEDEFAULT      : c_int : -2147483648
+// SetWindowPos Flags
+SWP_NOSIZE         :: 0x0001
+SWP_NOMOVE         :: 0x0002
+SWP_NOZORDER       :: 0x0004
+SWP_NOREDRAW       :: 0x0008
+SWP_NOACTIVATE     :: 0x0010
+SWP_FRAMECHANGED   :: 0x0020 // The frame changed: send WM_NCCALCSIZE
+SWP_SHOWWINDOW     :: 0x0040
+SWP_HIDEWINDOW     :: 0x0080
+SWP_NOCOPYBITS     :: 0x0100
+SWP_NOOWNERZORDER  :: 0x0200 // Don't do owner Z ordering
+SWP_NOSENDCHANGING :: 0x0400 // Don't send WM_WINDOWPOSCHANGING
+
+SWP_DRAWFRAME    :: SWP_FRAMECHANGED
+SWP_NOREPOSITION :: SWP_NOOWNERZORDER
+
+SWP_DEFERERASE     :: 0x2000 // same as SWP_DEFERDRAWING
+SWP_ASYNCWINDOWPOS :: 0x4000 // same as SWP_CREATESPB
+
+HWND_TOP       :: HWND( uintptr(0))     //  0
+HWND_BOTTOM    :: HWND( uintptr(1))     //  1
+HWND_TOPMOST   :: HWND(~uintptr(0))     // -1
+HWND_NOTOPMOST :: HWND(~uintptr(0) - 1) // -2
+
+// Window field offsets for GetWindowLong()
+GWL_STYLE   :: -16
+GWL_EXSTYLE :: -20
+GWL_ID      :: -12
+
+when ODIN_ARCH == .i386 {
+	GWL_WNDPROC    :: -4
+	GWL_HINSTANCE  :: -6
+	GWL_HWNDPARENT :: -8
+	GWL_USERDATA   :: -21
+}
+
+GWLP_WNDPROC    :: -4
+GWLP_HINSTANCE  :: -6
+GWLP_HWNDPARENT :: -8
+GWLP_USERDATA   :: -21
+GWLP_ID         :: -12
+
+// Class field offsets for GetClassLong()
+GCL_CBWNDEXTRA :: -18
+GCL_CBCLSEXTRA :: -20
+GCL_STYLE      :: -26
+GCW_ATOM       :: -32
+
+when ODIN_ARCH == .i386 {
+	GCL_MENUNAME      :: -8
+	GCL_HBRBACKGROUND :: -10
+	GCL_HCURSOR       :: -12
+	GCL_HICON         :: -14
+	GCL_HMODULE       :: -16
+	GCL_WNDPROC       :: -24
+	GCL_HICONSM       :: -34
+}
+
+GCLP_MENUNAME      :: -8
+GCLP_HBRBACKGROUND :: -10
+GCLP_HCURSOR       :: -12
+GCLP_HICON         :: -14
+GCLP_HMODULE       :: -16
+GCLP_WNDPROC       :: -24
+GCLP_HICONSM       :: -34
+
+// GetSystemMetrics() codes
+SM_CXSCREEN          :: 0
+SM_CYSCREEN          :: 1
+SM_CXVSCROLL         :: 2
+SM_CYHSCROLL         :: 3
+SM_CYCAPTION         :: 4
+SM_CXBORDER          :: 5
+SM_CYBORDER          :: 6
+SM_CXDLGFRAME        :: 7
+SM_CYDLGFRAME        :: 8
+SM_CYVTHUMB          :: 9
+SM_CXHTHUMB          :: 10
+SM_CXICON            :: 11
+SM_CYICON            :: 12
+SM_CXCURSOR          :: 13
+SM_CYCURSOR          :: 14
+SM_CYMENU            :: 15
+SM_CXFULLSCREEN      :: 16
+SM_CYFULLSCREEN      :: 17
+SM_CYKANJIWINDOW     :: 18
+SM_MOUSEPRESENT      :: 19
+SM_CYVSCROLL         :: 20
+SM_CXHSCROLL         :: 21
+SM_DEBUG             :: 22
+SM_SWAPBUTTON        :: 23
+SM_RESERVED1         :: 24
+SM_RESERVED2         :: 25
+SM_RESERVED3         :: 26
+SM_RESERVED4         :: 27
+SM_CXMIN             :: 28
+SM_CYMIN             :: 29
+SM_CXSIZE            :: 30
+SM_CYSIZE            :: 31
+SM_CXFRAME           :: 32
+SM_CYFRAME           :: 33
+SM_CXMINTRACK        :: 34
+SM_CYMINTRACK        :: 35
+SM_CXDOUBLECLK       :: 36
+SM_CYDOUBLECLK       :: 37
+SM_CXICONSPACING     :: 38
+SM_CYICONSPACING     :: 39
+SM_MENUDROPALIGNMENT :: 40
+SM_PENWINDOWS        :: 41
+SM_DBCSENABLED       :: 42
+SM_CMOUSEBUTTONS     :: 43
+
+SM_CXFIXEDFRAME :: SM_CXDLGFRAME  // ;win40 name change
+SM_CYFIXEDFRAME :: SM_CYDLGFRAME  // ;win40 name change
+SM_CXSIZEFRAME  :: SM_CXFRAME     // ;win40 name change
+SM_CYSIZEFRAME  :: SM_CYFRAME     // ;win40 name change
+
+SM_SECURE       :: 44
+SM_CXEDGE       :: 45
+SM_CYEDGE       :: 46
+SM_CXMINSPACING :: 47
+SM_CYMINSPACING :: 48
+SM_CXSMICON     :: 49
+SM_CYSMICON     :: 50
+SM_CYSMCAPTION  :: 51
+SM_CXSMSIZE     :: 52
+SM_CYSMSIZE     :: 53
+SM_CXMENUSIZE   :: 54
+SM_CYMENUSIZE   :: 55
+SM_ARRANGE      :: 56
+SM_CXMINIMIZED  :: 57
+SM_CYMINIMIZED  :: 58
+SM_CXMAXTRACK   :: 59
+SM_CYMAXTRACK   :: 60
+SM_CXMAXIMIZED  :: 61
+SM_CYMAXIMIZED  :: 62
+SM_NETWORK      :: 63
+SM_CLEANBOOT    :: 67
+SM_CXDRAG       :: 68
+SM_CYDRAG       :: 69
+
+SM_SHOWSOUNDS        :: 70
+SM_CXMENUCHECK       :: 71   // Use instead of GetMenuCheckMarkDimensions()!
+SM_CYMENUCHECK       :: 72
+SM_SLOWMACHINE       :: 73
+SM_MIDEASTENABLED    :: 74
+SM_MOUSEWHEELPRESENT :: 75
+SM_XVIRTUALSCREEN    :: 76
+SM_YVIRTUALSCREEN    :: 77
+SM_CXVIRTUALSCREEN   :: 78
+SM_CYVIRTUALSCREEN   :: 79
+SM_CMONITORS         :: 80
+SM_SAMEDISPLAYFORMAT :: 81
+SM_IMMENABLED        :: 82
+SM_CXFOCUSBORDER     :: 83
+SM_CYFOCUSBORDER     :: 84
+SM_TABLETPC          :: 86
+SM_MEDIACENTER       :: 87
+SM_STARTER           :: 88
+SM_SERVERR2          :: 89
+
+SM_MOUSEHORIZONTALWHEELPRESENT :: 91
+
+SM_CXPADDEDBORDER :: 92
+SM_DIGITIZER      :: 94
+SM_MAXIMUMTOUCHES :: 95
+SM_CMETRICS       :: 97
+
+SM_REMOTESESSION        :: 0x1000
+SM_SHUTTINGDOWN         :: 0x2000
+SM_REMOTECONTROL        :: 0x2001
+SM_CARETBLINKINGENABLED :: 0x2002
+SM_CONVERTIBLESLATEMODE :: 0x2003
+SM_SYSTEMDOCKED         :: 0x2004
+
+// System Menu Command Values
+SC_SIZE         :: 0xF000
+SC_MOVE         :: 0xF010
+SC_MINIMIZE     :: 0xF020
+SC_MAXIMIZE     :: 0xF030
+SC_NEXTWINDOW   :: 0xF040
+SC_PREVWINDOW   :: 0xF050
+SC_CLOSE        :: 0xF060
+SC_VSCROLL      :: 0xF070
+SC_HSCROLL      :: 0xF080
+SC_MOUSEMENU    :: 0xF090
+SC_KEYMENU      :: 0xF100
+SC_ARRANGE      :: 0xF110
+SC_RESTORE      :: 0xF120
+SC_TASKLIST     :: 0xF130
+SC_SCREENSAVE   :: 0xF140
+SC_HOTKEY       :: 0xF150
+SC_DEFAULT      :: 0xF160
+SC_MONITORPOWER :: 0xF170
+SC_CONTEXTHELP  :: 0xF180
+SC_SEPARATOR    :: 0xF00F
+SCF_ISSECURE    :: 0x00000001
+SC_ICON         :: SC_MINIMIZE
+SC_ZOOM         :: SC_MAXIMIZE
+
+CW_USEDEFAULT : c_int : -2147483648
 
 SIZE_RESTORED  :: 0
 SIZE_MINIMIZED :: 1
@@ -415,6 +697,86 @@ WMSZ_TOPRIGHT    :: 5
 WMSZ_BOTTOM      :: 6
 WMSZ_BOTTOMLEFT  :: 7
 WMSZ_BOTTOMRIGHT :: 8
+
+// Key State Masks for Mouse Messages
+MK_LBUTTON  :: 0x0001
+MK_RBUTTON  :: 0x0002
+MK_SHIFT    :: 0x0004
+MK_CONTROL  :: 0x0008
+MK_MBUTTON  :: 0x0010
+MK_XBUTTON1 :: 0x0020
+MK_XBUTTON2 :: 0x0040
+
+// Value for rolling one detent
+WHEEL_DELTA :: 120
+
+// Setting to scroll one page for SPI_GET/SETWHEELSCROLLLINES
+WHEEL_PAGESCROLL :: max(UINT)
+
+// XButton values are WORD flags
+XBUTTON1 :: 0x0001
+XBUTTON2 :: 0x0002
+// Were there to be an XBUTTON3, its value would be 0x0004
+
+MAPVK_VK_TO_VSC    :: 0
+MAPVK_VSC_TO_VK    :: 1
+MAPVK_VK_TO_CHAR   :: 2
+MAPVK_VSC_TO_VK_EX :: 3
+MAPVK_VK_TO_VSC_EX :: 4
+
+TME_HOVER     :: 0x00000001
+TME_LEAVE     :: 0x00000002
+TME_NONCLIENT :: 0x00000010
+TME_QUERY     :: 0x40000000
+TME_CANCEL    :: 0x80000000
+HOVER_DEFAULT :: 0xFFFFFFFF
+
+USER_TIMER_MAXIMUM :: 0x7FFFFFFF
+USER_TIMER_MINIMUM :: 0x0000000A
+
+
+// SetWindowsHook() codes
+WH_MIN             :: -1
+WH_MSGFILTER       :: -1
+WH_JOURNALRECORD   :: 0
+WH_JOURNALPLAYBACK :: 1
+WH_KEYBOARD        :: 2
+WH_GETMESSAGE      :: 3
+WH_CALLWNDPROC     :: 4
+WH_CBT             :: 5
+WH_SYSMSGFILTER    :: 6
+WH_MOUSE           :: 7
+WH_HARDWARE        :: 8
+WH_DEBUG           :: 9
+WH_SHELL           :: 10
+WH_FOREGROUNDIDLE  :: 11
+WH_CALLWNDPROCRET  :: 12
+WH_KEYBOARD_LL     :: 13
+WH_MOUSE_LL        :: 14
+WH_MAX             :: 14
+WH_MINHOOK         :: WH_MIN
+WH_MAXHOOK         :: WH_MAX
+
+// Hook Codes
+HC_ACTION      :: 0
+HC_GETNEXT     :: 1
+HC_SKIP        :: 2
+HC_NOREMOVE    :: 3
+HC_NOREM       :: HC_NOREMOVE
+HC_SYSMODALON  :: 4
+HC_SYSMODALOFF :: 5
+
+// CBT Hook Codes
+HCBT_MOVESIZE     :: 0
+HCBT_MINMAX       :: 1
+HCBT_QS           :: 2
+HCBT_CREATEWND    :: 3
+HCBT_DESTROYWND   :: 4
+HCBT_ACTIVATE     :: 5
+HCBT_CLICKSKIPPED :: 6
+HCBT_KEYSKIPPED   :: 7
+HCBT_SYSCOMMAND   :: 8
+HCBT_SETFOCUS     :: 9
 
 _IDC_APPSTARTING := rawptr(uintptr(32650))
 _IDC_ARROW       := rawptr(uintptr(32512))
@@ -837,6 +1199,15 @@ FILE_TYPE_PIPE :: 0x0003
 RECT  :: struct {left, top, right, bottom: LONG}
 POINT :: struct {x, y: LONG}
 
+WINDOWPOS :: struct {
+	hwnd: HWND,
+	hwndInsertAfter: HWND,
+	x: c_int,
+	y: c_int,
+	cx: c_int,
+	cy: c_int,
+	flags: UINT,
+}
 
 when size_of(uintptr) == 4 {
 	WSADATA :: struct {
