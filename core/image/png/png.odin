@@ -18,7 +18,6 @@ import "core:compress/zlib"
 import "core:image"
 
 import "core:os"
-import "core:strings"
 import "core:hash"
 import "core:bytes"
 import "core:io"
@@ -238,7 +237,7 @@ append_chunk :: proc(list: ^[dynamic]image.PNG_Chunk, src: image.PNG_Chunk, allo
 	append(list, c)
 	if len(list) != length + 1 {
 		// Resize during append failed.
-		return mem.Allocator_Error.Out_Of_Memory
+		return .Unable_To_Allocate_Or_Resize
 	}
 
 	return
@@ -318,13 +317,12 @@ read_header :: proc(ctx: ^$C) -> (image.PNG_IHDR, Error) {
 }
 
 chunk_type_to_name :: proc(type: ^image.PNG_Chunk_Type) -> string {
-	t := transmute(^u8)type
-	return strings.string_from_ptr(t, 4)
+	return string(([^]u8)(type)[:4])
 }
 
-load_from_slice :: proc(slice: []u8, options := Options{}, allocator := context.allocator) -> (img: ^Image, err: Error) {
+load_from_bytes :: proc(data: []byte, options := Options{}, allocator := context.allocator) -> (img: ^Image, err: Error) {
 	ctx := &compress.Context_Memory_Input{
-		input_data = slice,
+		input_data = data,
 	}
 
 	/*
@@ -344,10 +342,9 @@ load_from_file :: proc(filename: string, options := Options{}, allocator := cont
 	defer delete(data)
 
 	if ok {
-		return load_from_slice(data, options)
+		return load_from_bytes(data, options)
 	} else {
-		img = new(Image)
-		return img, compress.General_Error.File_Not_Found
+		return nil, .Unable_To_Read_File
 	}
 }
 
@@ -375,13 +372,14 @@ load_from_context :: proc(ctx: ^$C, options := Options{}, allocator := context.a
 	if img == nil {
 		img = new(Image)
 	}
+	img.which = .PNG
 
 	info := new(image.PNG_Info)
 	img.metadata = info
 
 	signature, io_error := compress.read_data(ctx, Signature)
 	if io_error != .None || signature != .PNG {
-		return img, .Invalid_PNG_Signature
+		return img, .Invalid_Signature
 	}
 
 	idat: []u8
@@ -747,7 +745,7 @@ load_from_context :: proc(ctx: ^$C, options := Options{}, allocator := context.a
 		dest_raw_size := compute_buffer_size(int(header.width), int(header.height), out_image_channels, 8)
 		t := bytes.Buffer{}
 		if !resize(&t.buf, dest_raw_size) {
-			return {}, mem.Allocator_Error.Out_Of_Memory
+			return {}, .Unable_To_Allocate_Or_Resize
 		}
 
 		i := 0; j := 0
@@ -828,7 +826,7 @@ load_from_context :: proc(ctx: ^$C, options := Options{}, allocator := context.a
 		dest_raw_size := compute_buffer_size(int(header.width), int(header.height), out_image_channels, 16)
 		t := bytes.Buffer{}
 		if !resize(&t.buf, dest_raw_size) {
-			return {}, mem.Allocator_Error.Out_Of_Memory
+			return {}, .Unable_To_Allocate_Or_Resize
 		}
 
 		p16 := mem.slice_data_cast([]u16, temp.buf[:])
@@ -1027,7 +1025,7 @@ load_from_context :: proc(ctx: ^$C, options := Options{}, allocator := context.a
 		dest_raw_size := compute_buffer_size(int(header.width), int(header.height), out_image_channels, 8)
 		t := bytes.Buffer{}
 		if !resize(&t.buf, dest_raw_size) {
-			return {}, mem.Allocator_Error.Out_Of_Memory
+			return {}, .Unable_To_Allocate_Or_Resize
 		}
 
 		p := mem.slice_data_cast([]u8, temp.buf[:])
@@ -1535,7 +1533,7 @@ defilter :: proc(img: ^Image, filter_bytes: ^bytes.Buffer, header: ^image.PNG_IH
 
 	num_bytes := compute_buffer_size(width, height, channels, depth == 16 ? 16 : 8)
 	if !resize(&img.pixels.buf, num_bytes) {
-		return mem.Allocator_Error.Out_Of_Memory
+		return .Unable_To_Allocate_Or_Resize
 	}
 
 	filter_ok: bool
@@ -1577,7 +1575,7 @@ defilter :: proc(img: ^Image, filter_bytes: ^bytes.Buffer, header: ^image.PNG_IH
 				temp: bytes.Buffer
 				temp_len := compute_buffer_size(x, y, channels, depth == 16 ? 16 : 8)
 				if !resize(&temp.buf, temp_len) {
-					return mem.Allocator_Error.Out_Of_Memory
+					return .Unable_To_Allocate_Or_Resize
 				}
 
 				params := Filter_Params{
@@ -1639,4 +1637,10 @@ defilter :: proc(img: ^Image, filter_bytes: ^bytes.Buffer, header: ^image.PNG_IH
 	return nil
 }
 
-load :: proc{load_from_file, load_from_slice, load_from_context}
+load :: proc{load_from_file, load_from_bytes, load_from_context}
+
+
+@(init, private)
+_register :: proc() {
+	image.register(.PNG, load_from_bytes, destroy)
+}

@@ -6,24 +6,7 @@ import "core:runtime"
 nil_allocator_proc :: proc(allocator_data: rawptr, mode: Allocator_Mode,
                            size, alignment: int,
                            old_memory: rawptr, old_size: int, loc := #caller_location) -> ([]byte, Allocator_Error) {
-	switch mode {
-	case .Alloc:
-		return nil, .Out_Of_Memory
-	case .Free:
-		return nil, .None
-	case .Free_All:
-		return nil, .Mode_Not_Implemented
-	case .Resize:
-		if size == 0 {
-			return nil, .None
-		}
-		return nil, .Out_Of_Memory
-	case .Query_Features:
-		return nil, .Mode_Not_Implemented
-	case .Query_Info:
-		return nil, .Mode_Not_Implemented
-	}
-	return nil, .None
+	return nil, nil
 }
 
 nil_allocator :: proc() -> Allocator {
@@ -763,6 +746,8 @@ dynamic_pool_reset :: proc(using pool: ^Dynamic_Pool) {
 		free(a, block_allocator)
 	}
 	clear(&out_band_allocations)
+
+	bytes_left = 0 // Make new allocations call `cycle_new_block` again.
 }
 
 dynamic_pool_free_all :: proc(using pool: ^Dynamic_Pool) {
