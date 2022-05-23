@@ -2786,14 +2786,14 @@ bool check_transmute(CheckerContext *c, Ast *node, Operand *o, Type *t) {
 		return false;
 	}
 
-	if (o->mode == Addressing_Constant) {
-		gbString expr_str = expr_to_string(o->expr);
-		error(o->expr, "Cannot transmute a constant expression: '%s'", expr_str);
-		gb_string_free(expr_str);
-		o->mode = Addressing_Invalid;
-		o->expr = node;
-		return false;
-	}
+	// if (o->mode == Addressing_Constant) {
+	// 	gbString expr_str = expr_to_string(o->expr);
+	// 	error(o->expr, "Cannot transmute a constant expression: '%s'", expr_str);
+	// 	gb_string_free(expr_str);
+	// 	o->mode = Addressing_Invalid;
+	// 	o->expr = node;
+	// 	return false;
+	// }
 
 	if (is_type_untyped(o->type)) {
 		gbString expr_str = expr_to_string(o->expr);
@@ -2844,8 +2844,10 @@ bool check_transmute(CheckerContext *c, Ast *node, Operand *o, Type *t) {
 		}
 	}
 
+	o->expr = node;
 	o->mode = Addressing_Value;
 	o->type = t;
+	o->value = {};
 	return true;
 }
 
@@ -9310,7 +9312,15 @@ ExprKind check_expr_base_internal(CheckerContext *c, Operand *o, Ast *node, Type
  			} else {
  				gbString str = expr_to_string(o->expr);
  				gbString typ = type_to_string(o->type);
+ 				begin_error_block();
+
  				error(o->expr, "Cannot dereference '%s' of type '%s'", str, typ);
+ 				if (o->type && is_type_multi_pointer(o->type)) {
+ 					error_line("\tDid you mean '%s[0]'?\n", str);
+ 				}
+
+ 				end_error_block();
+
  				gb_string_free(typ);
  				gb_string_free(str);
  				o->mode = Addressing_Invalid;
@@ -10055,7 +10065,6 @@ gbString write_expr_to_string(gbString str, Ast *node, bool shorthand) {
 			str = gb_string_appendc(str, ") ");
 		}
 		switch (st->kind) {
-		case UnionType_maybe:      str = gb_string_appendc(str, "#maybe ");      break;
 		case UnionType_no_nil:     str = gb_string_appendc(str, "#no_nil ");     break;
 		case UnionType_shared_nil: str = gb_string_appendc(str, "#shared_nil "); break;
 		}

@@ -3082,13 +3082,13 @@ bool check_builtin_procedure(CheckerContext *c, Operand *operand, Ast *call, i32
 			}
 
 
-			if (!is_type_pointer(dst.type)) {
+			if (!is_type_pointer(dst.type) && !is_type_multi_pointer(dst.type)) {
 				gbString str = type_to_string(dst.type);
 				error(dst.expr, "Expected a pointer value for '%.*s', got %s", LIT(builtin_name), str);
 				gb_string_free(str);
 				return false;
 			}
-			if (!is_type_pointer(src.type)) {
+			if (!is_type_pointer(src.type) && !is_type_multi_pointer(src.type)) {
 				gbString str = type_to_string(src.type);
 				error(src.expr, "Expected a pointer value for '%.*s', got %s", LIT(builtin_name), str);
 				gb_string_free(str);
@@ -3130,7 +3130,7 @@ bool check_builtin_procedure(CheckerContext *c, Operand *operand, Ast *call, i32
 			}
 
 
-			if (!is_type_pointer(ptr.type)) {
+			if (!is_type_pointer(ptr.type) && !is_type_multi_pointer(ptr.type)) {
 				gbString str = type_to_string(ptr.type);
 				error(ptr.expr, "Expected a pointer value for '%.*s', got %s", LIT(builtin_name), str);
 				gb_string_free(str);
@@ -3174,7 +3174,7 @@ bool check_builtin_procedure(CheckerContext *c, Operand *operand, Ast *call, i32
 			operand->mode = Addressing_Value;
 			operand->type = ptr.type;
 
-			if (!is_type_pointer(ptr.type)) {
+			if (!is_type_pointer(ptr.type)  && !is_type_multi_pointer(ptr.type)) {
 				gbString str = type_to_string(ptr.type);
 				error(ptr.expr, "Expected a pointer value for '%.*s', got %s", LIT(builtin_name), str);
 				gb_string_free(str);
@@ -3217,7 +3217,7 @@ bool check_builtin_procedure(CheckerContext *c, Operand *operand, Ast *call, i32
 			operand->mode = Addressing_Value;
 			operand->type = t_int;
 
-			if (!is_type_pointer(ptr0.type)) {
+			if (!is_type_pointer(ptr0.type) && !is_type_multi_pointer(ptr0.type)) {
 				gbString str = type_to_string(ptr0.type);
 				error(ptr0.expr, "Expected a pointer value for '%.*s', got %s", LIT(builtin_name), str);
 				gb_string_free(str);
@@ -3230,7 +3230,7 @@ bool check_builtin_procedure(CheckerContext *c, Operand *operand, Ast *call, i32
 				return false;
 			}
 
-			if (!is_type_pointer(ptr1.type)) {
+			if (!is_type_pointer(ptr1.type) && !is_type_multi_pointer(ptr1.type)) {
 				gbString str = type_to_string(ptr1.type);
 				error(ptr1.expr, "Expected a pointer value for '%.*s', got %s", LIT(builtin_name), str);
 				gb_string_free(str);
@@ -4468,6 +4468,99 @@ bool check_builtin_procedure(CheckerContext *c, Operand *operand, Ast *call, i32
 
 			operand->mode = Addressing_Value;
 			operand->type = t_int;
+			operand->value = {};
+			break;
+		}
+		break;
+
+	case BuiltinProc_wasm_memory_atomic_wait32:
+		{
+			if (!is_arch_wasm()) {
+				error(call, "'%.*s' is only allowed on wasm targets", LIT(builtin_name));
+				return false;
+			}
+
+			Operand ptr = {};
+			Operand expected = {};
+			Operand timeout = {};
+			check_expr(c, &ptr,      ce->args[0]); if (ptr.mode == Addressing_Invalid) return false;
+			check_expr(c, &expected, ce->args[1]); if (expected.mode == Addressing_Invalid) return false;
+			check_expr(c, &timeout,  ce->args[2]); if (timeout.mode == Addressing_Invalid) return false;
+
+			Type *t_u32_ptr = alloc_type_pointer(t_u32);
+			convert_to_typed(c, &ptr, t_u32_ptr);  if (ptr.mode == Addressing_Invalid) return false;
+			convert_to_typed(c, &expected, t_u32); if (expected.mode == Addressing_Invalid) return false;
+			convert_to_typed(c, &timeout, t_i64);  if (timeout.mode == Addressing_Invalid) return false;
+
+			if (!is_operand_value(ptr) || !check_is_assignable_to(c, &ptr, t_u32_ptr)) {
+				gbString e = expr_to_string(ptr.expr);
+				gbString t = type_to_string(ptr.type);
+				error(ptr.expr, "'%.*s' expected ^u32 for the memory pointer, got '%s' of type %s", LIT(builtin_name), e, t);
+				gb_string_free(t);
+				gb_string_free(e);
+				return false;
+			}
+
+			if (!is_operand_value(expected) || !check_is_assignable_to(c, &expected, t_u32)) {
+				gbString e = expr_to_string(expected.expr);
+				gbString t = type_to_string(expected.type);
+				error(expected.expr, "'%.*s' expected u32 for the 'expected' value, got '%s' of type %s", LIT(builtin_name), e, t);
+				gb_string_free(t);
+				gb_string_free(e);
+				return false;
+			}
+
+			if (!is_operand_value(timeout) || !check_is_assignable_to(c, &timeout, t_i64)) {
+				gbString e = expr_to_string(timeout.expr);
+				gbString t = type_to_string(timeout.type);
+				error(timeout.expr, "'%.*s' expected i64 for the timeout, got '%s' of type %s", LIT(builtin_name), e, t);
+				gb_string_free(t);
+				gb_string_free(e);
+				return false;
+			}
+
+			operand->mode = Addressing_Value;
+			operand->type = t_u32;
+			operand->value = {};
+			break;
+		}
+		break;
+	case BuiltinProc_wasm_memory_atomic_notify32:
+		{
+			if (!is_arch_wasm()) {
+				error(call, "'%.*s' is only allowed on wasm targets", LIT(builtin_name));
+				return false;
+			}
+
+			Operand ptr = {};
+			Operand waiters = {};
+			check_expr(c, &ptr,     ce->args[0]); if (ptr.mode == Addressing_Invalid) return false;
+			check_expr(c, &waiters, ce->args[1]); if (waiters.mode == Addressing_Invalid) return false;
+
+			Type *t_u32_ptr = alloc_type_pointer(t_u32);
+			convert_to_typed(c, &ptr, t_u32_ptr); if (ptr.mode == Addressing_Invalid) return false;
+			convert_to_typed(c, &waiters, t_u32); if (waiters.mode == Addressing_Invalid) return false;
+
+			if (!is_operand_value(ptr) || !check_is_assignable_to(c, &ptr, t_u32_ptr)) {
+				gbString e = expr_to_string(ptr.expr);
+				gbString t = type_to_string(ptr.type);
+				error(ptr.expr, "'%.*s' expected ^u32 for the memory pointer, got '%s' of type %s", LIT(builtin_name), e, t);
+				gb_string_free(t);
+				gb_string_free(e);
+				return false;
+			}
+
+			if (!is_operand_value(waiters) || !check_is_assignable_to(c, &waiters, t_u32)) {
+				gbString e = expr_to_string(waiters.expr);
+				gbString t = type_to_string(waiters.type);
+				error(waiters.expr, "'%.*s' expected u32 for the 'waiters' value, got '%s' of type %s", LIT(builtin_name), e, t);
+				gb_string_free(t);
+				gb_string_free(e);
+				return false;
+			}
+
+			operand->mode = Addressing_Value;
+			operand->type = t_u32;
 			operand->value = {};
 			break;
 		}
