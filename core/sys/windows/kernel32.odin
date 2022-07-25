@@ -6,7 +6,7 @@ foreign import kernel32 "system:Kernel32.lib"
 @(default_calling_convention="stdcall")
 foreign kernel32 {
 	OutputDebugStringA :: proc(lpOutputString: LPCSTR) --- // The only A thing that is allowed
-	OutputDebugStringW :: proc(lpOutputString: LPCSTR) ---
+	OutputDebugStringW :: proc(lpOutputString: LPCWSTR) ---
 
 	ReadConsoleW :: proc(hConsoleInput: HANDLE,
 	                     lpBuffer: LPVOID,
@@ -101,7 +101,7 @@ foreign kernel32 {
 	GetExitCodeThread :: proc(thread: HANDLE, exit_code: ^DWORD) -> BOOL ---
 	TerminateThread :: proc(thread: HANDLE, exit_code: DWORD) -> BOOL ---
 
-	CreateSemaphoreW :: proc(attributes: LPSECURITY_ATTRIBUTES, initial_count, maximum_count: LONG, name: LPCSTR) -> HANDLE ---
+	CreateSemaphoreW :: proc(attributes: LPSECURITY_ATTRIBUTES, initial_count, maximum_count: LONG, name: LPCWSTR) -> HANDLE ---
 	ReleaseSemaphore :: proc(semaphore: HANDLE, release_count: LONG, previous_count: ^LONG) -> BOOL ---
 
 	CreateWaitableTimerW :: proc(
@@ -329,7 +329,6 @@ foreign kernel32 {
 }
 
 
-STANDARD_RIGHTS_REQUIRED     :: DWORD(0x000F0000)
 SECTION_QUERY                :: DWORD(0x0001)
 SECTION_MAP_WRITE            :: DWORD(0x0002)
 SECTION_MAP_READ             :: DWORD(0x0004)

@@ -463,8 +463,15 @@ i32 linker_stage(lbGenerator *gen) {
 				// correctly this way since all the other dependencies provided implicitly
 				// by the compiler frontend are still needed and most of the command
 				// line arguments prepared previously are incompatible with ld.
-				link_settings = gb_string_appendc(link_settings, "-Wl,-init,'_odin_entry_point' ");
-				link_settings = gb_string_appendc(link_settings, "-Wl,-fini,'_odin_exit_point' ");
+				if (build_context.metrics.os == TargetOs_darwin) {
+					link_settings = gb_string_appendc(link_settings, "-Wl,-init,'__odin_entry_point' ");
+					// NOTE(weshardee): __odin_exit_point should also be added, but -fini 
+					// does not exist on MacOS
+				} else {
+					link_settings = gb_string_appendc(link_settings, "-Wl,-init,'_odin_entry_point' ");
+					link_settings = gb_string_appendc(link_settings, "-Wl,-fini,'_odin_exit_point' ");
+				}
+				
 			} else if (build_context.metrics.os != TargetOs_openbsd) {
 				// OpenBSD defaults to PIE executable. do not pass -no-pie for it.
 				link_settings = gb_string_appendc(link_settings, "-no-pie ");
@@ -574,7 +581,7 @@ void usage(String argv0) {
 	print_usage_line(1, "check             parse, and type check a directory of .odin files");
 	print_usage_line(1, "query             parse, type check, and output a .json file containing information about the program");
 	print_usage_line(1, "strip-semicolon   parse, type check, and remove unneeded semicolons from the entire program");
-	print_usage_line(1, "test              build ands runs procedures with the attribute @(test) in the initial package");
+	print_usage_line(1, "test              build and runs procedures with the attribute @(test) in the initial package");
 	print_usage_line(1, "doc               generate documentation on a directory of .odin files");
 	print_usage_line(1, "version           print version");
 	print_usage_line(1, "report            print information useful to reporting a bug");
@@ -1376,8 +1383,8 @@ bool parse_build_flags(Array<String> args) {
 						}
 						case BuildFlag_TargetFeatures: {
 							GB_ASSERT(value.kind == ExactValue_String);
-							build_context.target_features = value.value_string;
-							string_to_lower(&build_context.target_features);
+							build_context.target_features_string = value.value_string;
+							string_to_lower(&build_context.target_features_string);
 							break;
 						}
 						case BuildFlag_RelocMode: {

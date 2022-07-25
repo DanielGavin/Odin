@@ -18,9 +18,9 @@ Marshal_Error :: union #shared_nil {
 }
 
 marshal :: proc(v: any, allocator := context.allocator) -> (data: []byte, err: Marshal_Error) {
-	b := strings.make_builder(allocator)
+	b := strings.builder_make(allocator)
 	defer if err != nil {
-		strings.destroy_builder(&b)
+		strings.builder_destroy(&b)
 	}
 
 	marshal_to_builder(&b, v) or_return
@@ -49,7 +49,7 @@ marshal_to_writer :: proc(w: io.Writer, v: any) -> (err: Marshal_Error) {
 		unreachable()
 
 	case runtime.Type_Info_Integer:
-		buf: [21]byte
+		buf: [40]byte
 		u: u128
 		switch i in a {
 		case i8:      u = u128(i)
