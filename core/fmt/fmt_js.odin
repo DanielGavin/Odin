@@ -35,11 +35,23 @@ stderr := io.Writer{
 }
 
 // print formats using the default print settings and writes to stdout
-print   :: proc(args: ..any, sep := " ") -> int { return wprint(w=stdout, args=args, sep=sep) }
+print   :: proc(args: ..any, sep := " ") -> int { 
+	stdout.stream_vtable = write_vtable
+	stdout.stream_data = rawptr(uintptr(2))
+	return wprint(w=stdout, args=args, sep=sep) 
+}
 // println formats using the default print settings and writes to stdout
-println :: proc(args: ..any, sep := " ") -> int { return wprintln(w=stdout, args=args, sep=sep) }
+println :: proc(args: ..any, sep := " ") -> int { 
+	stdout.stream_vtable = write_vtable
+	stdout.stream_data = rawptr(uintptr(2))
+	return wprintln(w=stdout, args=args, sep=sep) 
+}
 // printf formats according to the specififed format string and writes to stdout
-printf  :: proc(fmt: string, args: ..any) -> int { return wprintf(stdout, fmt, ..args) }
+printf  :: proc(fmt: string, args: ..any) -> int { 
+	stdout.stream_vtable = write_vtable
+	stdout.stream_data = rawptr(uintptr(2))
+	return wprintf(stdout, fmt, ..args) 
+}
 
 // eprint formats using the default print settings and writes to stderr
 eprint   :: proc(args: ..any, sep := " ") -> int { return wprint(w=stderr, args=args, sep=sep) }

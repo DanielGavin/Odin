@@ -1,3 +1,4 @@
+//+build !js
 package odin_parser
 
 import "core:odin/tokenizer"
